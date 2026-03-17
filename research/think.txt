@@ -1,0 +1,25 @@
+# Research Notes: Predictive Maintenance AI Agent
+
+## 1. Data Schema for Maintenance Logs
+Logs should ideally include:
+- Equipment ID/Name
+- Timestamp
+- Activity Type (Repair, Inspection, Routine Maintenance)
+- Observations/Notes (Textual description)
+- Status (Fixed, Pending, Needs Follow-up)
+- Severity (Low, Medium, High, Critical)
+
+## 2. AI Agent Strategies
+- **RAG for Historical Lookup:** Use a vector database or simple keyword search over past logs to identify recurring issues.
+- **Few-Shot Learning for Classification:** Provide examples of "warning signs" in text logs (e.g., "unusual vibration," "overheating," "minor leak") to help the LLM identify failure patterns.
+- **Prioritization Logic:**
+  - Criticality of the machine.
+  - History of recent failures.
+  - Urgency indicated in latest operational notes.
+
+## 3. Potential Tools/Libraries
+- **Python:** Primary language.
+- **SQLite:** Lightweight storage for structured logs.
+- **OpenAI/Anthropic/Gemini API:** For the generative agent core.
+- **LangChain/LlamaIndex:** Frameworks for agentic workflows.
+- **Rich/Click:** For a polished CLI interface.

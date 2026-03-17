@@ -1,0 +1,6 @@
+# Only standard library used for this prototype.
+# Recommended for future:
+# pydantic
+# langchain
+# click
+# rich

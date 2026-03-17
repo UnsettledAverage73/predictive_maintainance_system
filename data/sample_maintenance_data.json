@@ -1,0 +1,198 @@
+{
+    "maintenance_logs": [
+        {
+            "equipment_id": "CONV01",
+            "equipment_name": "Conveyor Belt Assembly B",
+            "timestamp": "2026-03-07T17:40:33.120192",
+            "activity_type": "Repair",
+            "notes": "Standard replacement performed on Conveyor Belt Assembly B.",
+            "status": "Fixed",
+            "severity": "Low"
+        },
+        {
+            "equipment_id": "EXT002",
+            "equipment_name": "Extruder D",
+            "timestamp": "2026-03-17T17:40:33.120192",
+            "activity_type": "Emergency Fix",
+            "notes": "Standard checkup performed on Extruder D.",
+            "status": "Fixed",
+            "severity": "Medium"
+        },
+        {
+            "equipment_id": "CONV01",
+            "equipment_name": "Conveyor Belt Assembly B",
+            "timestamp": "2026-02-28T17:40:33.120192",
+            "activity_type": "Routine Maintenance",
+            "notes": "Standard servicing performed on Conveyor Belt Assembly B.",
+            "status": "Fixed",
+            "severity": "Medium"
+        },
+        {
+            "equipment_id": "CONV01",
+            "equipment_name": "Conveyor Belt Assembly B",
+            "timestamp": "2026-03-03T17:40:33.120192",
+            "activity_type": "Emergency Fix",
+            "notes": "Standard servicing performed on Conveyor Belt Assembly B.",
+            "status": "Fixed",
+            "severity": "Critical"
+        },
+        {
+            "equipment_id": "CNC001",
+            "equipment_name": "CNC Lathe Machine A",
+            "timestamp": "2026-02-24T17:40:33.120192",
+            "activity_type": "Inspection",
+            "notes": "Standard servicing performed on CNC Lathe Machine A.",
+            "status": "Fixed",
+            "severity": "Critical"
+        },
+        {
+            "equipment_id": "HYD005",
+            "equipment_name": "Hydraulic Press C",
+            "timestamp": "2026-02-20T17:40:33.120192",
+            "activity_type": "Emergency Fix",
+            "notes": "Standard checkup performed on Hydraulic Press C.",
+            "status": "Fixed",
+            "severity": "Critical"
+        },
+        {
+            "equipment_id": "EXT002",
+            "equipment_name": "Extruder D",
+            "timestamp": "2026-03-06T17:40:33.120192",
+            "activity_type": "Repair",
+            "notes": "Standard replacement performed on Extruder D.",
+            "status": "Needs Follow-up",
+            "severity": "High"
+        },
+        {
+            "equipment_id": "HYD005",
+            "equipment_name": "Hydraulic Press C",
+            "timestamp": "2026-02-16T17:40:33.120192",
+            "activity_type": "Repair",
+            "notes": "Standard checkup performed on Hydraulic Press C.",
+            "status": "Fixed",
+            "severity": "Medium"
+        },
+        {
+            "equipment_id": "HYD005",
+            "equipment_name": "Hydraulic Press C",
+            "timestamp": "2026-03-09T17:40:33.120192",
+            "activity_type": "Repair",
+            "notes": "Standard servicing performed on Hydraulic Press C.",
+            "status": "Pending",
+            "severity": "High"
+        },
+        {
+            "equipment_id": "CONV01",
+            "equipment_name": "Conveyor Belt Assembly B",
+            "timestamp": "2026-02-26T17:40:33.120192",
+            "activity_type": "Inspection",
+            "notes": "Standard servicing performed on Conveyor Belt Assembly B.",
+            "status": "Needs Follow-up",
+            "severity": "Critical"
+        }
+    ],
+    "operational_notes": [
+        {
+            "equipment_id": "HYD005",
+            "timestamp": "2026-02-23T17:40:33.120192",
+            "note": "Operator observed slight lag in Hydraulic Press C.",
+            "observed_by": "Operator 14"
+        },
+        {
+            "equipment_id": "HYD005",
+            "timestamp": "2026-02-26T17:40:33.120192",
+            "note": "Operator observed minor vibration in Hydraulic Press C.",
+            "observed_by": "Operator 19"
+        },
+        {
+            "equipment_id": "HYD005",
+            "timestamp": "2026-03-02T17:40:33.120192",
+            "note": "Operator observed fluctuating temperature in Hydraulic Press C.",
+            "observed_by": "Operator 6"
+        },
+        {
+            "equipment_id": "CONV01",
+            "timestamp": "2026-02-16T17:40:33.120192",
+            "note": "Operator observed minor vibration in Conveyor Belt Assembly B.",
+            "observed_by": "Operator 5"
+        },
+        {
+            "equipment_id": "HYD005",
+            "timestamp": "2026-02-24T17:40:33.120192",
+            "note": "Operator observed strange smell in Hydraulic Press C.",
+            "observed_by": "Operator 7"
+        },
+        {
+            "equipment_id": "CONV01",
+            "timestamp": "2026-02-28T17:40:33.120192",
+            "note": "Operator observed strange smell in Conveyor Belt Assembly B.",
+            "observed_by": "Operator 19"
+        },
+        {
+            "equipment_id": "CNC001",
+            "timestamp": "2026-02-15T17:40:33.120192",
+            "note": "Operator observed slight lag in CNC Lathe Machine A.",
+            "observed_by": "Operator 8"
+        },
+        {
+            "equipment_id": "HYD005",
+            "timestamp": "2026-03-10T17:40:33.120192",
+            "note": "Operator observed fluctuating temperature in Hydraulic Press C.",
+            "observed_by": "Operator 5"
+        },
+        {
+            "equipment_id": "HYD005",
+            "timestamp": "2026-02-20T17:40:33.120192",
+            "note": "Operator observed minor vibration in Hydraulic Press C.",
+            "observed_by": "Operator 3"
+        },
+        {
+            "equipment_id": "CONV01",
+            "timestamp": "2026-02-21T17:40:33.120192",
+            "note": "Operator observed minor vibration in Conveyor Belt Assembly B.",
+            "observed_by": "Operator 6"
+        }
+    ],
+    "incident_reports": [
+        {
+            "equipment_id": "HYD005",
+            "timestamp": "2026-03-02T17:40:33.120192",
+            "incident_type": "Power Failure",
+            "description": "Unexpected failure of Hydraulic Press C during peak hours.",
+            "impact": "Partial Downtime",
+            "resolution": "Fixed on site"
+        },
+        {
+            "equipment_id": "EXT002",
+            "timestamp": "2026-03-03T17:40:33.120192",
+            "incident_type": "Leakage",
+            "description": "Unexpected failure of Extruder D during peak hours.",
+            "impact": "Total Downtime",
+            "resolution": "Fixed on site"
+        },
+        {
+            "equipment_id": "EXT002",
+            "timestamp": "2026-03-01T17:40:33.120192",
+            "incident_type": "Overheating",
+            "description": "Unexpected breakdown of Extruder D during peak hours.",
+            "impact": "Total Downtime",
+            "resolution": "Pending spare parts"
+        },
+        {
+            "equipment_id": "HYD005",
+            "timestamp": "2026-03-17T17:40:33.120192",
+            "incident_type": "Overheating",
+            "description": "Unexpected malfunction of Hydraulic Press C during peak hours.",
+            "impact": "Partial Downtime",
+            "resolution": null
+        },
+        {
+            "equipment_id": "CONV01",
+            "timestamp": "2026-02-26T17:40:33.120192",
+            "incident_type": "Sensor Error",
+            "description": "Unexpected breakdown of Conveyor Belt Assembly B during peak hours.",
+            "impact": "Partial Downtime",
+            "resolution": null
+        }
+    ]
+}
