@@ -16,13 +16,15 @@ def main():
 
     print("--- Maintenance AI Agent ---")
     print("1. Summarize Equipment Status")
-    print("2. Analyze Failure Patterns")
+    print("2. Analyze Failure Patterns (with RAG)")
     print("3. Generate Prioritized Maintenance Schedule")
-    print("4. Query Specific Equipment History")
-    print("5. Exit")
+    print("4. Query Specific Equipment History (Exact)")
+    print("5. Search Similar Historical Issues (Semantic)")
+    print("6. Sync Local Data to Vector DB (Pinecone)")
+    print("7. Exit")
 
     while True:
-        choice = input("\nEnter your choice (1-5): ")
+        choice = input("\nEnter your choice (1-7): ")
 
         if choice == "1":
             print("\n" + agent.summarize_all_equipment())
@@ -40,6 +42,12 @@ def main():
             for log in history['logs']:
                 print(f"  [{log['timestamp']}] {log['activity_type']}: {log['notes']}")
         elif choice == "5":
+            query = input("Enter your search query: ")
+            print("\n" + agent.query_similar_issues(query))
+        elif choice == "6":
+            print("\nSyncing data to Pinecone...")
+            print(agent.sync_to_vector_db())
+        elif choice == "7":
             print("Exiting...")
             break
         else:
