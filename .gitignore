@@ -1,0 +1,22 @@
+# Environments
+.env
+.venv/
+venv/
+env/
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# Local Logs & Data
+*.log
+data/*.db
+data/*.json.tmp
+data/iot_stream.json
+demo_data/
+run_demo.py
+simulator.log
+
+# IDEs
+.vscode/
+.idea/
