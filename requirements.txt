@@ -1,6 +1,16 @@
-# Only standard library used for this prototype.
-# Recommended for future:
-# pydantic
-# langchain
-# click
-# rich
+# Core Dependencies
+pydantic
+python-dotenv
+requests
+google-genai
+groq
+pinecone
+
+# Data & Visualisation
+streamlit
+pandas
+plotly
+paho-mqtt
+
+# Local Development
+# ollama (handled via direct API)
