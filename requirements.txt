@@ -5,12 +5,14 @@ requests
 google-genai
 groq
 pinecone
-
+sarvamai
 # Data & Visualisation
 streamlit
 pandas
 plotly
 paho-mqtt
-
+fastapi
+uvicorn
+numpy
 # Local Development
 # ollama (handled via direct API)

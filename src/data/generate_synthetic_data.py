@@ -41,12 +41,24 @@ def generate_data(num_logs: int = 10, num_notes: int = 10, num_incidents: int = 
         data["maintenance_logs"].append(log)
 
     # Generate Operational Notes
+    hinglish_notes = [
+        "Machine se halki awaz aa rahi hai",
+        "Bearing garam ho raha hai, check karo",
+        "Oil leak lag raha hai niche se",
+        "Motor thoda lag kar raha hai",
+        "Sensor red light dikha raha hai, please dekho"
+    ]
+    
     for _ in range(num_notes):
         eq = random.choice(EQUIPMENT)
+        note_text = random.choice([
+            f"Operator observed {random.choice(['minor vibration', 'strange smell', 'slight lag', 'fluctuating temperature'])} in {eq['name']}.",
+            random.choice(hinglish_notes)
+        ])
         note = {
             "equipment_id": eq["id"],
             "timestamp": (start_date + timedelta(days=random.randint(0, 30))).isoformat(),
-            "note": f"Operator observed {random.choice(['minor vibration', 'strange smell', 'slight lag', 'fluctuating temperature'])} in {eq['name']}.",
+            "note": note_text,
             "observed_by": f"Operator {random.randint(1, 20)}"
         }
         data["operational_notes"].append(note)
