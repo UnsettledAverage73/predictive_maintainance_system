@@ -1,0 +1,45 @@
+services:
+  backend:
+    build: .
+    # command: ["python", "src/api.py"]  # Standard execution
+    # For Level 8 scaling, we use uvicorn for the FastAPI gateway
+    command: ["uvicorn", "src.api:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - PINECONE_API_KEY=${PINECONE_API_KEY}
+      - SARVAM_API_KEY=${SARVAM_API_KEY}
+    depends_on:
+      - ingestor
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    command: ["npm", "start", "--", "-H", "0.0.0.0"]
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    depends_on:
+      - backend
+
+  ingestor:
+    build: .
+    command: ["python", "src/data/iot_ingestor.py"]
+    volumes:
+      - ./data:/app/data
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY}
+
+  simulator:
+    build: .
+    command: ["python", "src/data/iot_simulator.py"]
+    volumes:
+      - ./data:/app/data
+
+volumes:
+  data:

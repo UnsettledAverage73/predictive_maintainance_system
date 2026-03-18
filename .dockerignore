@@ -1,0 +1,12 @@
+.venv/
+venv/
+env/
+.env
+__pycache__/
+*.pyc
+*.db
+data/iot_stream.json
+demo_data/
+simulator.log
+.git/
+.vscode/
