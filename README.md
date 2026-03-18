@@ -1,35 +1,64 @@
-# Predictive Maintenance AI Agent
+# Predictive Maintenance AI Agent (Sovereign Industrial Stack)
 
-This project implements a Generative AI Agent for Predictive Maintenance Scheduling in Manufacturing.
+This project implements a high-performance, Generative AI Agent for Predictive Maintenance in Manufacturing, following the "Sovereign Backbone" architecture (Levels 1-7).
 
-## Features
-- **Data Collection:** Supports maintenance logs, operational notes, and incident reports.
-- **AI Agent:** Analyzes equipment history to identify failure patterns.
-- **Scheduling:** Generates prioritized maintenance schedules based on incident frequency and operational notes.
-- **Querying:** Allows users to query the history and status of specific equipment.
+## 🌟 Enterprise Features
+- **Multilingual Reasoning (Level 2.5):** Powered by **Sarvam AI**, recognizing Hinglish/Indic code-mixed logs for local factory floor nuances.
+- **Hybrid AI Inference (Level 3):** Local-first (Ollama) with resilient Cloud Fallbacks (Groq/Google).
+- **Semantic Memory (Level 4):** Pinecone Vector DB integration for historical RAG context.
+- **Sovereign IoT Ingestor (Level 5):** Real-time, high-frequency sensor monitoring via Local IPC.
+- **Visual Command Center (Level 6):** Streamlit dashboard with real-time Plotly analytics.
+- **Industrial RBAC & Deployment (Level 7):** Secure Role-Based Access Control and full Docker orchestration.
 
-## Directory Structure
-- `src/data/`: Data schema and synthetic data generation.
-- `src/agent/`: Core AI agent logic.
-- `src/cli/`: Command-line interface for interaction.
-- `data/`: Stores maintenance data (JSON format).
-- `tests/`: Unit tests for the agent.
-
-## How to Run
-1. **Generate Synthetic Data:**
+## 🚀 Deployment (Docker - Recommended)
+1. **Configure Environment:**
+   Ensure your `.env` file contains:
    ```bash
-   python3 src/data/generate_synthetic_data.py
+   GROQ_API_KEY=your_key
+   PINECONE_API_KEY=your_key
+   SARVAM_API_KEY=your_key
    ```
-2. **Run the AI Agent CLI:**
+2. **Launch Sovereign Stack:**
    ```bash
-   python3 src/cli/main.py
+   docker-compose up --build
    ```
-3. **Run Tests:**
-   ```bash
-   python3 tests/test_agent.py
-   ```
+3. **Access Dashboard:**
+   Open `http://localhost:8501`
+   - **Manager:** `admin` / `admin123`
+   - **Operator:** `op1` / `operator123`
 
-## Future Enhancements
-- Integration with real LLM APIs (OpenAI, Gemini) for deeper textual analysis.
-- Vector database integration for efficient RAG-based querying of large log histories.
-- Web-based dashboard for visualization.
+## 🛠️ Local Development (Manual)
+1. **Initialize Environment:** `uv sync`
+2. **Launch Services:**
+   - Simulator: `uv run python src/data/iot_simulator.py`
+   - Ingestor: `uv run python src/data/iot_ingestor.py`
+   - Dashboard: `uv run streamlit run src/cli/dashboard.py`
+
+## 🏗️ System Architecture (Mermaid)
+
+```mermaid
+graph TD
+    subgraph Hardware_Layer [Physical Layer / Simulator]
+        S[(IoT Sensors)] -->|Telemetry| I[Python Ingestor]
+        C[Command Bus] -->|Actuation| S
+    end
+
+    subgraph Intelligence_Layer [Sovereign Brain]
+        I -->|Anomaly Detect| R[RAG Reasoning Engine]
+        R -->|Groq/Sarvam LLM| P[Strategic Prescription]
+        P -->|JSON IPC| C
+    end
+
+    subgraph Memory_Layer [Knowledge Base]
+        P -->|Vector Embedding| V[(Pinecone DB)]
+        H[Human Feedback] -->|Learning| V
+        V -->|Contextual Recall| R
+    end
+
+    subgraph Interface_Layer [Next.js Control Center]
+        R -->|Live Stream| D[Dashboard]
+        D -->|Manual Reset| C
+    end
+
+## 🛡️ Security & Privacy
+Following the Sovereign protocol, all sensitive raw sensor data stays within the local SQLite/IPC layer. AI reasoning is routed through privacy-preserving local models where available.
