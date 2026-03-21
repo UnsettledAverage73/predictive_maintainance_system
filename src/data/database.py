@@ -242,6 +242,17 @@ def log_telemetry_point(machine_id, key, value, string_value=None):
     conn.commit()
     conn.close()
 
+def log_sensor_reading(eq_id, temp, vib):
+    """Logs raw telemetry data into the local persistence layer (Legacy)."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO sensor_readings (equipment_id, timestamp, temperature, vibration) VALUES (?, ?, ?, ?)",
+        (eq_id, datetime.now().isoformat(), temp, vib)
+    )
+    conn.commit()
+    conn.close()
+
 def log_ai_alert(eq_id, severity, reason, prescription):
     """Logs AI strategic prescriptions. This is what the dashboard pulls from."""
     conn = sqlite3.connect(DB_PATH)

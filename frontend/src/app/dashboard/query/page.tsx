@@ -81,7 +81,12 @@ export default function QueryPage() {
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaRecorder.current = new MediaRecorder(stream);
+      
+      // Select best supported MIME type
+      const types = ["audio/wav", "audio/webm", "audio/ogg"];
+      const mimeType = types.find(t => MediaRecorder.isTypeSupported(t)) || "audio/webm";
+      
+      mediaRecorder.current = new MediaRecorder(stream, { mimeType });
       audioChunks.current = [];
       mediaRecorder.current.ondataavailable = (e) => {
         if (e.data.size > 0) audioChunks.current.push(e.data);
@@ -96,13 +101,19 @@ export default function QueryPage() {
 
   const stopRecording = () => {
     mediaRecorder.current?.stop();
+    mediaRecorder.current?.stream.getTracks().forEach((track) => track.stop());
     setIsRecording(false);
   };
 
   const handleVoiceSend = async () => {
-    const audioBlob = new Blob(audioChunks.current, { type: 'audio/wav' });
+    const recordedMimeType = mediaRecorder.current?.mimeType || "audio/webm";
+    // Standardize naming for backend
+    const extension = recordedMimeType.includes("wav") ? "wav" : recordedMimeType.includes("ogg") ? "ogg" : "webm";
+    const audioBlob = new Blob(audioChunks.current, { type: recordedMimeType });
     const formData = new FormData();
-    formData.append("file", audioBlob);
+    // We send with a clean filename and standard MIME type
+    const cleanMimeType = recordedMimeType.split(";")[0];
+    formData.append("file", audioBlob, `voice-input.${extension}`);
     formData.append("machineId", machineId || "GLOBAL");
 
     setIsTyping(true);
@@ -313,4 +324,3 @@ export default function QueryPage() {
     </div>
   );
 }
-

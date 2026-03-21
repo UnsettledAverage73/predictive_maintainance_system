@@ -1,7 +1,8 @@
 'use client';
-import { useState } from 'react';
+import { useMemo } from 'react';
 import Link from 'next/link';
-import { CloudOff } from 'lucide-react';
+import { CloudOff, Filter, Search } from 'lucide-react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 
 const MOCK_LOGS = Array.from({ length: 15 }).map((_, i) => ({
   id: `c-log-${i}`,
@@ -14,9 +15,42 @@ const MOCK_LOGS = Array.from({ length: 15 }).map((_, i) => ({
 }));
 
 export default function CloudConnectLogsPage() {
-  const [filter, setFilter] = useState('ALL');
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const filter = searchParams.get('severity') ?? 'ALL';
+  const providerFilter = searchParams.get('provider') ?? 'ALL';
+  const query = searchParams.get('q') ?? '';
 
-  const filteredLogs = MOCK_LOGS.filter(l => filter === 'ALL' || l.severity === filter);
+  const updateParams = (updates: Record<string, string>) => {
+    const nextParams = new URLSearchParams(searchParams.toString());
+
+    Object.entries(updates).forEach(([key, value]) => {
+      if (!value || value === 'ALL') nextParams.delete(key);
+      else nextParams.set(key, value);
+    });
+
+    const nextQuery = nextParams.toString();
+    if (nextQuery !== searchParams.toString()) {
+      router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
+    }
+  };
+
+  const filteredLogs = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+
+    return MOCK_LOGS.filter((log) => {
+      const matchesSeverity = filter === 'ALL' || log.severity === filter;
+      const matchesProvider = providerFilter === 'ALL' || log.provider === providerFilter;
+      const matchesQuery =
+        !normalizedQuery ||
+        [log.name, log.provider, log.event, log.message, log.time].some((value) =>
+          value.toLowerCase().includes(normalizedQuery)
+        );
+
+      return matchesSeverity && matchesProvider && matchesQuery;
+    });
+  }, [filter, providerFilter, query]);
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6 pb-24 duration-500 animate-in fade-in">
@@ -32,18 +66,49 @@ export default function CloudConnectLogsPage() {
           <h1 className="text-3xl font-bold text-white tracking-tight">Connection History Logs</h1>
         </div>
         <div className="flex space-x-3 items-center">
-          <select 
-            value={filter} 
-            onChange={e => setFilter(e.target.value)}
-            className="px-4 py-2.5 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-md text-sm text-white focus:outline-none focus:border-[var(--color-primary)] transition-colors appearance-none pr-10 relative cursor-pointer shadow-sm hover:border-slate-500"
-          >
-            <option value="ALL">Filtered by: All Severities</option>
-            <option value="INFO">Info Logs Only</option>
-            <option value="ERROR">Errors & Failures Only</option>
-          </select>
           <button className="px-5 py-2.5 border border-[var(--color-border)] text-white bg-[var(--color-surface)] hover:bg-slate-800 rounded-md text-sm transition-colors shadow-sm font-medium">Export CSV</button>
         </div>
       </div>
+
+      <section className="surface-card rounded-2xl p-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+          <div className="relative flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-muted)]" />
+            <input
+              value={query}
+              onChange={(event) => updateParams({ q: event.target.value.trim() })}
+              placeholder="Search connection name, provider, event, message, or timestamp"
+              className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] py-3 pl-10 pr-4 text-sm outline-none focus:border-[var(--color-primary)]"
+            />
+          </div>
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <label className="flex items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-3 text-sm text-[var(--color-muted)]">
+              <Filter className="h-4 w-4" />
+              <select
+                value={filter}
+                onChange={(event) => updateParams({ severity: event.target.value })}
+                className="bg-transparent text-[var(--color-foreground)] outline-none"
+              >
+                <option value="ALL">All severities</option>
+                <option value="INFO">Info</option>
+                <option value="ERROR">Error</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-3 text-sm text-[var(--color-muted)]">
+              <Filter className="h-4 w-4" />
+              <select
+                value={providerFilter}
+                onChange={(event) => updateParams({ provider: event.target.value })}
+                className="bg-transparent text-[var(--color-foreground)] outline-none"
+              >
+                <option value="ALL">All providers</option>
+                <option value="AWS">AWS</option>
+                <option value="Azure">Azure</option>
+              </select>
+            </label>
+          </div>
+        </div>
+      </section>
 
       <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl overflow-hidden shadow-xl min-h-[400px] flex flex-col">
         {filteredLogs.length === 0 ? (
@@ -58,7 +123,9 @@ export default function CloudConnectLogsPage() {
                 Could not find any connection logs matching the selected filters. Try adjusting your severity filter.
               </p>
               <button 
-                onClick={() => setFilter('ALL')}
+                onClick={() => {
+                  router.replace(pathname, { scroll: false });
+                }}
                 className="px-6 py-2 bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-primary)]/30 rounded-lg text-sm font-bold shadow-sm hover:bg-[var(--color-primary)]/20 transition-colors"
               >
                 Clear Filters

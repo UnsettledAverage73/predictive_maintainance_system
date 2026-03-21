@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import time
+from twilio.rest import Client
 
 # Add src to python path for internal module discovery
 sys.path.append(os.path.join(os.path.dirname(__file__), '../../'))
@@ -12,6 +13,7 @@ from src.data.database import init_db, log_sensor_reading, log_ai_alert, get_las
 # --- CONFIGURATION PROTOCOLS ---
 IPC_FILE = os.path.join("data", "iot_stream.json")
 COMMAND_FILE = os.path.join("data", "commands.json") # AI -> Hardware Bridge
+CONFIG_FILE = os.path.join("data", "config.json")
 ALERT_COOLDOWN = 300  # 5 Minutes to prevent token bleed
 POLL_INTERVAL = 0.5   # Real-time responsiveness
 
@@ -20,6 +22,44 @@ init_db()
 
 # Load Sovereign AI Agent
 agent = MaintenanceAgent("data/sample_maintenance_data.json")
+
+def get_config():
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, "r") as f:
+            return json.load(f)
+    return {"whatsapp_number": os.getenv("MY_PHONE_NUMBER", "")}
+
+def send_whatsapp_alert(equipment_id: str, severity: str, prescription: str):
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+    if not account_sid or not auth_token:
+        return None
+
+    config = get_config()
+    to_number = config.get("whatsapp_number")
+    if not to_number:
+        return None
+
+    client = Client(account_sid, auth_token)
+    from_whatsapp = "whatsapp:+14155238886"
+    to_whatsapp = f"whatsapp:{to_number}"
+    message_body = (
+        f"CRITICAL MACHINE ALERT\n\n"
+        f"Asset: {equipment_id}\n"
+        f"Severity: {severity}\n\n"
+        f"AI Prescription:\n{prescription}\n"
+    )
+
+    try:
+        message = client.messages.create(
+            body=message_body,
+            from_=from_whatsapp,
+            to=to_whatsapp
+        )
+        return message.sid
+    except Exception as e:
+        print(f"WhatsApp Dispatch Error: {e}")
+        return None
 
 def run_ingestor():
     print(f"--- [SOVEREIGN] IoT Ingestor Online ---")
@@ -87,10 +127,12 @@ def run_ingestor():
                                 # Trigger LLM Reasoning
                                 analysis = agent.analyze_patterns()
                                 log_ai_alert(eq_id, "CRITICAL", "Sensor Threshold Breach", analysis)
+                                send_whatsapp_alert(eq_id, "CRITICAL", analysis)
                                 print(f"✅ AI STRATEGIC PRESCRIPTION LOGGED")
                             except Exception as e:
                                 error_msg = f"AI Layer Offline. Protocol: Manual Inspection. Error: {str(e)[:40]}"
                                 log_ai_alert(eq_id, "CRITICAL", "Threshold Breach", error_msg)
+                                send_whatsapp_alert(eq_id, "CRITICAL", error_msg)
                                 print(f"⚠️ AI FALLBACK ACTIVE")
                         else:
                             # Log heartbeat without calling AI
@@ -108,4 +150,3 @@ def run_ingestor():
 
 if __name__ == "__main__":
     run_ingestor()
-

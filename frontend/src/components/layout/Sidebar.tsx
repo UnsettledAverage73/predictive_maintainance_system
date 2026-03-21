@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { LayoutDashboard, Server, CalendarDays, MessageSquare, Settings, AlertTriangle, PlusCircle, ChevronLeft, ChevronRight, Shield } from 'lucide-react';
@@ -23,25 +23,20 @@ const adminItems = [
 export function Sidebar() {
   const pathname = usePathname();
   const { isTablet, isDesktop } = useMediaQuery();
-  const [mounted, setMounted] = useState(false);
-  const [isCollapsed, setIsCollapsed] = useState(false);
-  const [isHovered, setIsHovered] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(() => {
+    if (typeof window === 'undefined') {
+      return false;
+    }
 
-  useEffect(() => {
-    setMounted(true);
-    const stored = localStorage.getItem('sidebar-collapsed');
-    if (stored) setIsCollapsed(stored === 'true');
-  }, []);
+    return localStorage.getItem('sidebar-collapsed') === 'true';
+  });
+  const [isHovered, setIsHovered] = useState(false);
 
   const handleToggle = () => {
     const val = !isCollapsed;
     setIsCollapsed(val);
     localStorage.setItem('sidebar-collapsed', String(val));
   };
-
-  if (!mounted) {
-    return <aside className="w-64 h-full bg-[var(--color-surface)] border-r border-[var(--color-border)] hidden md:block shrink-0"></aside>;
-  }
 
   const collapsed = isTablet || (isDesktop && isCollapsed);
   const isExpandedTablet = isTablet && isHovered;
@@ -51,7 +46,7 @@ export function Sidebar() {
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       className={cn(
-        "hidden md:flex h-full bg-[var(--color-surface)] border-r border-[var(--color-border)] flex-col py-4 px-3 z-40 transition-all duration-300 relative shrink-0",
+        "hidden md:flex h-full flex-col border-r border-white/8 bg-[rgba(10,14,20,0.92)] px-3 py-4 relative z-40 shrink-0 transition-all duration-300 backdrop-blur-xl",
         collapsed && !isExpandedTablet ? "w-[72px] items-center" : "w-[240px]",
         isExpandedTablet ? "absolute left-0 top-0 shadow-[20px_0_40px_rgba(0,0,0,0.3)] h-full" : ""
       )}
@@ -66,9 +61,28 @@ export function Sidebar() {
          </button>
       )}
 
-      <div className="mb-8 w-full mt-2">
+      <div className={cn("mb-7 mt-1 w-full", collapsed && !isExpandedTablet && "flex justify-center")}>
+        <div className={cn(
+          "surface-card hairline overflow-hidden rounded-2xl p-3",
+          collapsed && !isExpandedTablet ? "w-12 h-12 p-0 flex items-center justify-center rounded-2xl" : ""
+        )}>
+          <div className={cn("flex items-center gap-3", collapsed && !isExpandedTablet && "justify-center")}>
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,rgba(0,212,170,0.95),rgba(56,189,248,0.88))] text-sm font-black tracking-wide text-black shadow-[0_18px_40px_-24px_rgba(0,212,170,0.95)]">
+              PM
+            </div>
+            {(!collapsed || isExpandedTablet) && (
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-[var(--color-foreground)]">PredictMaint</p>
+                <p className="truncate text-[11px] uppercase tracking-[0.22em] text-[var(--color-muted)]">Factory Command</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="mb-8 w-full">
         {(!collapsed || isExpandedTablet) && (
-          <h2 className="text-[10px] uppercase font-bold text-[var(--color-muted)] tracking-widest mb-4 px-3">Operations</h2>
+          <h2 className="mb-4 px-3 text-[10px] font-bold uppercase tracking-[0.24em] text-[var(--color-muted)]">Operations</h2>
         )}
         <nav className="flex flex-col gap-2 w-full">
           {navItems.map((item) => {
@@ -76,11 +90,20 @@ export function Sidebar() {
             return (
               <Link key={item.href} href={item.href} className="w-full relative group" title={collapsed && !isExpandedTablet ? item.label : undefined}>
                 <div className={cn(
-                  "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all text-sm font-medium w-full group-hover:bg-[var(--color-surface)] hover:text-white",
-                  isActive ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] shadow-[inset_2px_0_0_var(--color-primary)]" : "text-[var(--color-muted)]",
+                  "flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium w-full transition-all hover:text-white",
+                  isActive
+                    ? "surface-card text-[var(--color-foreground)] shadow-[inset_0_0_0_1px_rgba(0,212,170,0.18),0_16px_28px_-20px_rgba(0,212,170,0.7)]"
+                    : "text-[var(--color-muted)] hover:bg-white/4",
                   collapsed && !isExpandedTablet && "justify-center px-0 w-11 mx-auto aspect-square"
                 )}>
-                  <item.icon className={cn("w-5 h-5 shrink-0 transition-transform group-hover:scale-110", isActive && "fill-[var(--color-primary)]/20")} />
+                  <div className={cn(
+                    "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border",
+                    isActive
+                      ? "border-[var(--color-primary)]/25 bg-[var(--color-primary)]/10 text-[var(--color-primary)]"
+                      : "border-white/8 bg-white/4"
+                  )}>
+                    <item.icon className={cn("h-4.5 w-4.5 shrink-0 transition-transform group-hover:scale-110", isActive && "fill-[var(--color-primary)]/20")} />
+                  </div>
                   {(!collapsed || isExpandedTablet) && (
                     <>
                       <span className="flex-1 whitespace-nowrap">{item.label}</span>
@@ -108,7 +131,7 @@ export function Sidebar() {
 
       <div className="w-full">
         {(!collapsed || isExpandedTablet) && (
-          <h2 className="text-[10px] uppercase font-bold text-[var(--color-muted)] tracking-widest mb-4 px-3">Administration</h2>
+          <h2 className="mb-4 px-3 text-[10px] font-bold uppercase tracking-[0.24em] text-[var(--color-muted)]">Administration</h2>
         )}
         <nav className="flex flex-col gap-2 w-full">
           {adminItems.map((item) => {
@@ -116,11 +139,20 @@ export function Sidebar() {
             return (
               <Link key={item.href} href={item.href} className="w-full relative group" title={collapsed && !isExpandedTablet ? item.label : undefined}>
                 <div className={cn(
-                  "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all text-sm font-medium w-full group-hover:bg-[var(--color-surface)] hover:text-white",
-                  isActive ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] shadow-[inset_2px_0_0_var(--color-primary)]" : "text-[var(--color-muted)]",
+                  "flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium w-full transition-all hover:text-white",
+                  isActive
+                    ? "surface-card text-[var(--color-foreground)] shadow-[inset_0_0_0_1px_rgba(0,212,170,0.18),0_16px_28px_-20px_rgba(0,212,170,0.7)]"
+                    : "text-[var(--color-muted)] hover:bg-white/4",
                   collapsed && !isExpandedTablet && "justify-center px-0 w-11 mx-auto aspect-square"
                 )}>
-                  <item.icon className="w-5 h-5 shrink-0 transition-transform group-hover:scale-110" />
+                  <div className={cn(
+                    "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border",
+                    isActive
+                      ? "border-[var(--color-primary)]/25 bg-[var(--color-primary)]/10 text-[var(--color-primary)]"
+                      : "border-white/8 bg-white/4"
+                  )}>
+                    <item.icon className="h-4.5 w-4.5 shrink-0 transition-transform group-hover:scale-110" />
+                  </div>
                   {(!collapsed || isExpandedTablet) && <span className="whitespace-nowrap">{item.label}</span>}
                 </div>
                 {collapsed && !isExpandedTablet && (
@@ -134,15 +166,16 @@ export function Sidebar() {
         </nav>
       </div>
 
-      <div className="mt-auto pt-4 border-t border-[var(--color-border)] w-full">
+      <div className="mt-auto w-full border-t border-white/8 pt-4">
         {(!collapsed || isExpandedTablet) ? (
-          <>
-            <div className="flex items-center gap-2 px-3 text-xs text-[var(--color-muted)] mb-2">
+          <div className="surface-card rounded-2xl p-3">
+            <div className="mb-2 flex items-center gap-2 text-xs text-[var(--color-muted)]">
               <div className="w-2 h-2 rounded-full bg-[var(--color-success)] shadow-[0_0_8px_rgba(34,197,94,0.6)] animate-pulse" />
               <span className="whitespace-nowrap font-medium text-slate-300">Platform Online</span>
             </div>
-            <p className="px-3 text-[10px] font-mono text-[var(--color-muted)] opacity-50">v2.0-stable</p>
-          </>
+            <p className="text-sm font-semibold">Detroit Plant Alpha</p>
+            <p className="mt-1 text-[10px] font-mono uppercase tracking-[0.24em] text-[var(--color-muted)] opacity-80">v2.0-stable</p>
+          </div>
         ) : (
            <div className="flex justify-center w-full mt-2">
              <div className="w-2 h-2 rounded-full bg-[var(--color-success)] shadow-[0_0_8px_rgba(34,197,94,0.6)] animate-pulse" title="Platform Online" />

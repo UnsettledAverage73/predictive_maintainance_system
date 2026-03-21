@@ -28,7 +28,7 @@ export default function CloudConnectWizardPage() {
     setLogs([]);
     
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = process.env.NEXT_PUBLIC_API_URL?.replace(/^https?:\/\//, '') || 'localhost:8000';
+    const host = process.env.NEXT_PUBLIC_API_URL?.replace(/^https?:\/\//, '') || (typeof window !== 'undefined' ? `${window.location.hostname}:8000` : 'localhost:8000');
     const socket = new WebSocket(`${protocol}//${host}/api/cloud/ws/provision`);
 
     socket.onopen = () => {

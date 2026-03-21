@@ -2,10 +2,24 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Command } from 'cmdk';
-import { Search, LayoutDashboard, Calendar, AlertTriangle, Settings, Cpu, TerminalSquare, X } from 'lucide-react';
+import { Search, LayoutDashboard, Calendar, AlertTriangle, Settings, Cpu, TerminalSquare, X, Siren, FileSearch } from 'lucide-react';
+import { api } from '@/lib/api';
+import { Alert, Machine } from '@/types';
+
+type BackendAlert = {
+  id: number;
+  equipment_id: string;
+  severity: string;
+  reason: string;
+  prescription: string;
+  timestamp: string;
+};
 
 export default function CommandPalette() {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [machines, setMachines] = useState<Machine[]>([]);
+  const [alerts, setAlerts] = useState<Alert[]>([]);
   const router = useRouter();
 
   useEffect(() => {
@@ -20,8 +34,48 @@ export default function CommandPalette() {
     return () => document.removeEventListener('keydown', down);
   }, []);
 
+  useEffect(() => {
+    const openPalette = () => setOpen(true);
+    window.addEventListener('command-palette:open', openPalette);
+
+    return () => window.removeEventListener('command-palette:open', openPalette);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const fetchPaletteData = async () => {
+      try {
+        const [equipment, rawAlerts] = await Promise.all([
+          api.getEquipment() as Promise<Machine[]>,
+          api.getAlerts() as Promise<BackendAlert[]>,
+        ]);
+
+        setMachines(equipment);
+        setAlerts(
+          rawAlerts.slice(0, 8).map((alert) => ({
+            id: String(alert.id),
+            machineId: alert.equipment_id,
+            machineName: alert.equipment_id,
+            severity: alert.severity.toLowerCase() === 'critical' || alert.severity.toLowerCase() === 'warning' ? alert.severity.toLowerCase() as Alert['severity'] : 'info',
+            title: alert.reason,
+            description: '',
+            aiAnalysis: alert.prescription,
+            status: 'new',
+            createdAt: alert.timestamp,
+          }))
+        );
+      } catch (error) {
+        console.error('Failed to load command palette data:', error);
+      }
+    };
+
+    fetchPaletteData();
+  }, [open]);
+
   const runCommand = (command: () => void) => {
     setOpen(false);
+    setQuery('');
     command();
   };
 
@@ -40,6 +94,8 @@ export default function CommandPalette() {
               placeholder="Type a command or search machines..." 
               className="flex-1 bg-transparent border-0 outline-none px-4 py-4 text-[var(--color-foreground)] placeholder:text-[var(--color-muted)] text-base"
               autoFocus
+              value={query}
+              onValueChange={setQuery}
             />
             <button 
               onClick={() => setOpen(false)}
@@ -81,19 +137,64 @@ export default function CommandPalette() {
               </Command.Item>
             </Command.Group>
 
+            {query.trim() && (
+              <Command.Group heading="Search Shortcuts" className="text-xs font-semibold text-[var(--color-muted)] uppercase tracking-widest px-2 py-3 border-t border-[var(--color-border)] mt-2">
+                <Command.Item
+                  value={`search-machines-${query}`}
+                  onSelect={() => runCommand(() => router.push(`/dashboard/machines?q=${encodeURIComponent(query.trim())}`))}
+                  className="flex items-center gap-3 px-3 py-3 mt-1 rounded-lg text-sm text-[var(--color-foreground)] aria-selected:bg-[var(--color-primary)]/10 aria-selected:text-[var(--color-primary)] cursor-pointer"
+                >
+                  <FileSearch className="w-4 h-4" /> Search machines for &quot;{query}&quot;
+                </Command.Item>
+                <Command.Item
+                  value={`search-alerts-${query}`}
+                  onSelect={() => runCommand(() => router.push(`/dashboard/alerts?q=${encodeURIComponent(query.trim())}`))}
+                  className="flex items-center gap-3 px-3 py-3 mt-1 rounded-lg text-sm text-[var(--color-foreground)] aria-selected:bg-[var(--color-primary)]/10 aria-selected:text-[var(--color-primary)] cursor-pointer"
+                >
+                  <Siren className="w-4 h-4" /> Search alerts for &quot;{query}&quot;
+                </Command.Item>
+                <Command.Item
+                  value={`search-logs-${query}`}
+                  onSelect={() => runCommand(() => router.push(`/settings/cloud-connect/logs?q=${encodeURIComponent(query.trim())}`))}
+                  className="flex items-center gap-3 px-3 py-3 mt-1 rounded-lg text-sm text-[var(--color-foreground)] aria-selected:bg-[var(--color-primary)]/10 aria-selected:text-[var(--color-primary)] cursor-pointer"
+                >
+                  <TerminalSquare className="w-4 h-4" /> Search logs for &quot;{query}&quot;
+                </Command.Item>
+              </Command.Group>
+            )}
+
             <Command.Group heading="Machines & Telemetry" className="text-xs font-semibold text-[var(--color-muted)] uppercase tracking-widest px-2 py-3 border-t border-[var(--color-border)] mt-2">
-              <Command.Item 
-                onSelect={() => runCommand(() => router.push('/dashboard/machines/MCH-001'))}
-                className="flex items-center gap-3 px-3 py-3 mt-1 rounded-lg text-sm text-[var(--color-foreground)] aria-selected:bg-[var(--color-primary)]/10 aria-selected:text-[var(--color-primary)] cursor-pointer"
-              >
-                <Cpu className="w-4 h-4" /> Extruder Line Alpha
-              </Command.Item>
-              <Command.Item 
-                onSelect={() => runCommand(() => router.push('/dashboard/machines/MCH-003'))}
-                className="flex items-center gap-3 px-3 py-3 mt-1 rounded-lg text-sm text-[var(--color-foreground)] aria-selected:bg-[var(--color-primary)]/10 aria-selected:text-[var(--color-primary)] cursor-pointer"
-              >
-                <Cpu className="w-4 h-4" /> Main Compressor
-              </Command.Item>
+              {machines.slice(0, 6).map((machine) => (
+                <Command.Item
+                  key={machine.id}
+                  value={`${machine.name} ${machine.id} ${machine.productionLine} ${machine.protocol} ${machine.status}`}
+                  onSelect={() => runCommand(() => router.push(`/dashboard/machines/${machine.id}`))}
+                  className="flex items-center gap-3 px-3 py-3 mt-1 rounded-lg text-sm text-[var(--color-foreground)] aria-selected:bg-[var(--color-primary)]/10 aria-selected:text-[var(--color-primary)] cursor-pointer"
+                >
+                  <Cpu className="w-4 h-4" />
+                  <div className="min-w-0">
+                    <div className="truncate">{machine.name}</div>
+                    <div className="truncate text-xs text-[var(--color-muted)]">{machine.id} • {machine.productionLine}</div>
+                  </div>
+                </Command.Item>
+              ))}
+            </Command.Group>
+
+            <Command.Group heading="Alerts" className="text-xs font-semibold text-[var(--color-muted)] uppercase tracking-widest px-2 py-3 border-t border-[var(--color-border)] mt-2">
+              {alerts.map((alert) => (
+                <Command.Item
+                  key={alert.id}
+                  value={`${alert.machineName} ${alert.title} ${alert.aiAnalysis} ${alert.severity}`}
+                  onSelect={() => runCommand(() => router.push(`/dashboard/alerts?q=${encodeURIComponent(alert.machineName)}`))}
+                  className="flex items-center gap-3 px-3 py-3 mt-1 rounded-lg text-sm text-[var(--color-foreground)] aria-selected:bg-[var(--color-primary)]/10 aria-selected:text-[var(--color-primary)] cursor-pointer"
+                >
+                  <AlertTriangle className="w-4 h-4" />
+                  <div className="min-w-0">
+                    <div className="truncate">{alert.title}</div>
+                    <div className="truncate text-xs text-[var(--color-muted)]">{alert.machineName} • {alert.severity}</div>
+                  </div>
+                </Command.Item>
+              ))}
             </Command.Group>
             
             <Command.Group heading="System" className="text-xs font-semibold text-[var(--color-muted)] uppercase tracking-widest px-2 py-3 border-t border-[var(--color-border)] mt-2">
@@ -102,6 +203,12 @@ export default function CommandPalette() {
                 className="flex items-center gap-3 px-3 py-3 mt-1 rounded-lg text-sm text-[var(--color-foreground)] aria-selected:bg-[var(--color-primary)]/10 aria-selected:text-[var(--color-primary)] cursor-pointer"
               >
                 <TerminalSquare className="w-4 h-4" /> Configure Cloud Connect
+              </Command.Item>
+              <Command.Item
+                onSelect={() => runCommand(() => router.push('/settings/cloud-connect/logs'))}
+                className="flex items-center gap-3 px-3 py-3 mt-1 rounded-lg text-sm text-[var(--color-foreground)] aria-selected:bg-[var(--color-primary)]/10 aria-selected:text-[var(--color-primary)] cursor-pointer"
+              >
+                <FileSearch className="w-4 h-4" /> Open Connection Logs
               </Command.Item>
             </Command.Group>
           </Command.List>

@@ -56,7 +56,9 @@ export function LiveLogPanel({ active, logs: externalLogs }: { active: boolean, 
           Live Connection Log
         </h3>
         <div className="flex space-x-3">
-          <button onClick={() => setLogs([])} className="text-xs text-slate-500 hover:text-white transition-colors">Clear</button>
+          {!externalLogs && (
+            <button onClick={() => setInternalLogs([])} className="text-xs text-slate-500 hover:text-white transition-colors">Clear</button>
+          )}
           <button onClick={downloadLogs} className="text-xs text-[var(--color-primary)] hover:underline transition-colors flex items-center">
              <svg className="w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
              Download

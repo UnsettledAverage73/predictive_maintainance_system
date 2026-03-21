@@ -34,7 +34,7 @@ export function MachineUsageChart() {
   }
 
   return (
-    <div className="glass-panel p-6 rounded-xl flex flex-col gap-4">
+    <div className="glass-panel p-6 rounded-xl flex flex-col gap-4 min-w-0 overflow-hidden">
       <div className="flex items-center justify-between">
         <h3 className="font-bold text-sm uppercase tracking-widest text-[var(--color-muted)] flex items-center gap-2">
           <Activity className="w-4 h-4 text-[var(--color-primary)]" />
@@ -46,8 +46,8 @@ export function MachineUsageChart() {
         </div>
       </div>
 
-      <div className="h-[250px] w-full">
-        <ResponsiveContainer width="100%" height="100%">
+      <div className="w-full min-w-0">
+        <ResponsiveContainer width="100%" height={250}>
           <BarChart data={data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#30363D" vertical={false} />
             <XAxis 

@@ -200,6 +200,7 @@ export default function ParameterManagerPage({ params }: { params: Promise<{ id:
                   <input 
                     type="text" 
                     value={editingParam.parameterKey}
+                    onChange={e => setEditingParam({...editingParam, parameterKey: e.target.value.toLowerCase().replace(/ /g, '_')})}
                     readOnly={!!editingParam.id}
                     className="w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-3 text-sm font-mono opacity-60"
                   />
