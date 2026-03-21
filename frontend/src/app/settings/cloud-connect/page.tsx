@@ -2,27 +2,63 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { LiveLogPanel } from '@/components/cloud-connect/LiveLogPanel';
+import { Settings2 } from 'lucide-react';
 
-type Provider = 'AWS' | 'GCP' | 'Azure' | null;
+type Provider = 'AWS' | 'GCP' | 'Azure' | 'Local' | null;
 
 export default function CloudConnectWizardPage() {
   const [step, setStep] = useState(1);
   const [provider, setProvider] = useState<Provider>(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+  const [logs, setLogs] = useState<any[]>([]);
 
-  const [awsRegion, setAwsRegion] = useState('');
-  const [vpcId, setVpcId] = useState('');
+  const [awsAccessKey, setAwsAccessKey] = useState('');
+  const [awsSecretKey, setAwsSecretKey] = useState('');
+  const [awsRegion, setAwsRegion] = useState('us-east-1');
+  const [instanceType, setInstanceType] = useState('t3.small');
+  const [storageGb, setStorageGb] = useState(30);
   
   const handleNext = () => setStep(prev => Math.min(prev + 1, 3));
   const handleBack = () => setStep(prev => Math.max(prev - 1, 1));
 
-  const handleConnect = () => {
+  const handleProvision = () => {
     setIsConnecting(true);
-    setTimeout(() => {
+    setLogs([]);
+    
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = process.env.NEXT_PUBLIC_API_URL?.replace(/^https?:\/\//, '') || 'localhost:8000';
+    const socket = new WebSocket(`${protocol}//${host}/api/cloud/ws/provision`);
+
+    socket.onopen = () => {
+      socket.send(JSON.stringify({
+        provider: provider?.toLowerCase(),
+        aws_access_key: awsAccessKey,
+        aws_secret_key: awsSecretKey,
+        region: awsRegion,
+        instance_type: instanceType,
+        storage_gb: storageGb
+      }));
+    };
+
+    socket.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === 'log') {
+        setLogs(prev => [...prev, { message: data.message, status: data.status }]);
+      } else if (data.type === 'complete') {
+        setIsConnecting(false);
+        setIsSuccess(true);
+        socket.close();
+      } else if (data.type === 'error') {
+        setLogs(prev => [...prev, { message: `ERROR: ${data.message}`, status: 'error' }]);
+        setIsConnecting(false);
+      }
+    };
+
+    socket.onerror = (err) => {
+      console.error("WebSocket error:", err);
       setIsConnecting(false);
-      setIsSuccess(true);
-    }, 4500);
+    };
   };
 
   if (isSuccess) {
@@ -85,8 +121,8 @@ export default function CloudConnectWizardPage() {
             {step === 1 && (
               <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
                 <h2 className="text-xl font-semibold mb-4">Choose your provider</h2>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                  {['AWS', 'GCP', 'Azure'].map(p => (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+                  {['AWS', 'GCP', 'Azure', 'Local'].map(p => (
                     <button 
                       key={p}
                       onClick={() => setProvider(p as Provider)}
@@ -97,11 +133,12 @@ export default function CloudConnectWizardPage() {
                       }`}
                     >
                       {p === 'AWS' && <span className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-0.5 bg-blue-600 text-white text-[10px] uppercase font-bold tracking-widest rounded shadow-md whitespace-nowrap">Most Common</span>}
+                      {p === 'Local' && <span className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-0.5 bg-teal-600 text-white text-[10px] uppercase font-bold tracking-widest rounded shadow-md whitespace-nowrap">On-Premise</span>}
                       
                       <div className="w-16 h-16 mb-4 bg-slate-800 rounded-lg flex items-center justify-center shadow-inner font-bold text-2xl text-[var(--color-muted)]">
-                        {p}
+                        {p === 'Local' ? '💻' : p}
                       </div>
-                      <h3 className="font-bold text-lg">{p}</h3>
+                      <h3 className="font-bold text-lg">{p === 'Local' ? 'Local Node' : p}</h3>
                     </button>
                   ))}
                 </div>
@@ -110,36 +147,78 @@ export default function CloudConnectWizardPage() {
 
             {step === 2 && provider === 'AWS' && (
               <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
-                <h2 className="text-xl font-semibold mb-4">AWS Configuration</h2>
+                <h2 className="text-xl font-semibold mb-4">AWS Node Provisioning</h2>
                 <div className="grid grid-cols-2 gap-6 bg-[var(--color-surface)] p-6 rounded-xl border border-[var(--color-border)] shadow-sm">
                   <div className="space-y-2">
                     <label className="text-sm font-medium text-[var(--color-muted)]">AWS Region</label>
                     <select value={awsRegion} onChange={e => setAwsRegion(e.target.value)} className="w-full bg-slate-900 border border-[var(--color-border)] rounded-md px-4 py-3 text-white focus:border-[var(--color-primary)] outline-none transition-colors appearance-none">
-                      <option value="" disabled>Select region...</option>
                       <option value="us-east-1">us-east-1 (N. Virginia)</option>
+                      <option value="us-west-2">us-west-2 (Oregon)</option>
                       <option value="eu-west-1">eu-west-1 (Ireland)</option>
+                      <option value="ap-south-1">ap-south-1 (Mumbai)</option>
                     </select>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium text-[var(--color-muted)]">VPC ID</label>
-                    <input type="text" value={vpcId} onChange={e => setVpcId(e.target.value)} placeholder="vpc-0a1b2c3d4e" className="w-full bg-slate-900 border border-[var(--color-border)] rounded-md px-4 py-3 text-white focus:border-[var(--color-primary)] outline-none font-mono placeholder-slate-600 transition-colors" />
+                    <label className="text-sm font-medium text-[var(--color-muted)]">Instance Type</label>
+                    <select value={instanceType} onChange={e => setInstanceType(e.target.value)} className="w-full bg-slate-900 border border-[var(--color-border)] rounded-md px-4 py-3 text-white focus:border-[var(--color-primary)] outline-none transition-colors appearance-none">
+                      <option value="t3.small">t3.small (Local Dev)</option>
+                      <option value="t3.medium">t3.medium (Standard)</option>
+                      <option value="g4ad.xlarge">g4ad.xlarge (GPU Accelerated)</option>
+                    </select>
                   </div>
                   <div className="space-y-2 col-span-2">
                     <label className="text-sm font-medium text-[var(--color-muted)]">IAM Access Key ID</label>
-                    <input type="text" className="w-full bg-slate-900 border border-[var(--color-border)] rounded-md px-4 py-3 text-white focus:border-[var(--color-primary)] outline-none font-mono transition-colors" autoComplete="off" />
+                    <input type="text" value={awsAccessKey} onChange={e => setAwsAccessKey(e.target.value)} className="w-full bg-slate-900 border border-[var(--color-border)] rounded-md px-4 py-3 text-white focus:border-[var(--color-primary)] outline-none font-mono transition-colors" placeholder="AKIA..." />
                   </div>
                   <div className="space-y-2 col-span-2">
                     <label className="text-sm font-medium text-[var(--color-muted)] flex justify-between items-center">
                       Secret Access Key
                       <span className="text-[10px] bg-[var(--color-primary)]/10 text-[var(--color-primary)] px-2 py-0.5 rounded border border-[var(--color-primary)]/20 shadow-sm">ENCRYPTED AT REST</span>
                     </label>
-                    <input type="password" placeholder="••••••••••••••••" className="w-full bg-slate-900 border border-[var(--color-border)] rounded-md px-4 py-3 text-white focus:border-[var(--color-primary)] outline-none font-mono tracking-widest transition-colors" autoComplete="new-password" />
+                    <input type="password" value={awsSecretKey} onChange={e => setAwsSecretKey(e.target.value)} placeholder="••••••••••••••••" className="w-full bg-slate-900 border border-[var(--color-border)] rounded-md px-4 py-3 text-white focus:border-[var(--color-primary)] outline-none font-mono tracking-widest transition-colors" />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-[var(--color-muted)]">Storage (GB)</label>
+                    <input type="number" value={storageGb} onChange={e => setStorageGb(parseInt(e.target.value))} className="w-full bg-slate-900 border border-[var(--color-border)] rounded-md px-4 py-3 text-white focus:border-[var(--color-primary)] outline-none font-mono transition-colors" />
                   </div>
                 </div>
               </div>
             )}
             
-            {step === 2 && provider !== 'AWS' && (
+            {step === 2 && provider === 'Local' && (
+              <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
+                <h2 className="text-xl font-semibold mb-4">Local Node Setup</h2>
+                <div className="bg-[var(--color-surface)] p-8 rounded-xl border border-[var(--color-border)] shadow-sm">
+                  <div className="flex items-center gap-4 mb-6">
+                    <div className="w-12 h-12 rounded-full bg-[var(--color-primary)]/10 flex items-center justify-center text-[var(--color-primary)]">
+                      <Settings2 className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold">Manual Installation</h3>
+                      <p className="text-sm text-[var(--color-muted)]">Run our optimized setup script on your local Linux machine.</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-900 rounded-lg p-4 font-mono text-sm mb-6 border border-slate-800 group relative">
+                    <div className="text-slate-400 mb-2"># Run this command on your target node:</div>
+                    <code className="text-[var(--color-primary)]">curl -sSL http://{typeof window !== 'undefined' ? window.location.host : 'localhost'}/scripts/setup_local_ai.sh | bash</code>
+                    <button className="absolute right-4 top-4 text-slate-500 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity">Copy</button>
+                  </div>
+
+                  <div className="space-y-4">
+                    <h4 className="text-xs font-bold uppercase tracking-widest text-[var(--color-muted)]">What this script does:</h4>
+                    <ul className="text-sm space-y-2 text-slate-300">
+                      <li className="flex items-start gap-2"><span className="text-[var(--color-primary)] mt-1">✓</span> Installs Docker and system dependencies</li>
+                      <li className="flex items-start gap-2"><span className="text-[var(--color-primary)] mt-1">✓</span> Pulls and configures Ollama (AI Engine)</li>
+                      <li className="flex items-start gap-2"><span className="text-[var(--color-primary)] mt-1">✓</span> Pre-downloads Qwen 2.5 and Nomic-Embed models</li>
+                      <li className="flex items-start gap-2"><span className="text-[var(--color-primary)] mt-1">✓</span> Configures firewall for Sovereign Matrix connectivity</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {step === 2 && provider !== 'AWS' && provider !== 'Local' && (
                <div className="text-center p-16 bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] animate-in slide-in-from-right-4 duration-300">
                  <p className="text-slate-400 font-medium">Mock stub for {provider} form logic.</p>
                </div>
@@ -186,11 +265,11 @@ export default function CloudConnectWizardPage() {
                </button>
              ) : (
                <button 
-                 onClick={handleConnect}
+                 onClick={handleProvision}
                  disabled={isConnecting}
                  className="px-8 py-3 bg-[var(--color-primary)] text-black font-bold rounded-lg hover:brightness-110 disabled:opacity-80 transition-all flex justify-center items-center"
                >
-                 {isConnecting ? 'Connecting...' : 'Establish Connection'}
+                 {isConnecting ? 'Provisioning Node...' : 'Provision Sovereign Node'}
                </button>
              )}
           </div>
@@ -198,7 +277,7 @@ export default function CloudConnectWizardPage() {
       </div>
 
       <div className="hidden lg:block w-[40%] bg-[#0D1117] relative z-20 shadow-[-10px_0_30px_rgba(0,0,0,0.5)]">
-         <LiveLogPanel active={isConnecting} />
+         <LiveLogPanel active={isConnecting} logs={logs} />
       </div>
     </div>
   );

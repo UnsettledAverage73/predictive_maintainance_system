@@ -22,6 +22,7 @@ export const api = {
   onboardMachine: (payload: any) => fetchApi("/api/equipment", { method: "POST", body: JSON.stringify(payload) }),
   testConnection: (payload: any) => fetchApi("/api/test-connection", { method: "POST", body: JSON.stringify(payload) }),
   getFactoryStats: () => fetchApi("/api/factory/stats"),
+  getFactoryUsage: () => fetchApi("/api/factory/usage"),
   getMachineTelemetry: (id: string, minutes: number = 60) => fetchApi(`/api/telemetry/${id}?minutes=${minutes}`),
   getMachineHistory: (id: string) => fetchApi(`/api/history/${id}`),
   getAlerts: () => fetchApi("/api/alerts"),

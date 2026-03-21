@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { MachineCard } from "@/components/machines/MachineCard";
+import { MachineUsageChart } from "@/components/charts/MachineUsageChart";
 import { MachineCardSkeleton } from "@/components/machines/MachineCardSkeleton";
 import { Machine, Alert } from "@/types";
 import { Activity, AlertTriangle, Calendar, Settings2, Sparkles, ArrowRight } from "lucide-react";
@@ -135,18 +136,22 @@ export default function DashboardPage() {
         </div>
 
         {/* Main Grid */}
-        <div className="flex-1 min-w-0 flex flex-col">
-          <h2 className="text-sm font-bold uppercase tracking-widest text-[var(--color-muted)] mb-3">Machine Fleet</h2>
-          <div 
-            className="grid gap-4 xl:gap-5" 
-            style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}
-          >
-            {isLoading 
-              ? Array.from({ length: 6 }).map((_, i) => <MachineCardSkeleton key={i} />)
-              : machines.map(machine => (
-                  <MachineCard key={machine.id} machine={machine} />
-                ))
-            }
+        <div className="flex-1 min-w-0 flex flex-col gap-6">
+          <MachineUsageChart />
+          
+          <div>
+            <h2 className="text-sm font-bold uppercase tracking-widest text-[var(--color-muted)] mb-3">Machine Fleet</h2>
+            <div 
+              className="grid gap-4 xl:gap-5" 
+              style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}
+            >
+              {isLoading 
+                ? Array.from({ length: 6 }).map((_, i) => <MachineCardSkeleton key={i} />)
+                : machines.map(machine => (
+                    <MachineCard key={machine.id} machine={machine} />
+                  ))
+              }
+            </div>
           </div>
         </div>
       </div>

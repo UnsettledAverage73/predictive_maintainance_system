@@ -43,13 +43,13 @@ export default function ParameterManagerPage({ params }: { params: Promise<{ id:
 
   const handleAddParam = () => {
     setEditingParam({
-      parameter_key: "",
-      display_name: "",
+      parameterKey: "",
+      displayName: "",
       unit: "",
-      normal_min: 0,
-      normal_max: 100,
-      warning_threshold: 110,
-      critical_threshold: 120,
+      normalMin: 0,
+      normalMax: 100,
+      warningThreshold: 110,
+      criticalThreshold: 120,
       direction: "above",
       description: "",
       category: "custom"
@@ -65,7 +65,19 @@ export default function ParameterManagerPage({ params }: { params: Promise<{ id:
   const handleSaveParam = async () => {
     setIsSaving(true);
     try {
-      await api.addMachineParameter(idStr, editingParam);
+      const payload = {
+        parameter_key: editingParam.parameterKey,
+        display_name: editingParam.displayName,
+        unit: editingParam.unit,
+        normal_min: editingParam.normalMin,
+        normal_max: editingParam.normalMax,
+        warning_threshold: editingParam.warningThreshold,
+        critical_threshold: editingParam.criticalThreshold,
+        direction: editingParam.direction,
+        description: editingParam.description
+      };
+
+      await api.addMachineParameter(idStr, payload);
       await fetchData();
       setIsEditorOpen(false);
     } catch (error) {
@@ -177,8 +189,8 @@ export default function ParameterManagerPage({ params }: { params: Promise<{ id:
                   <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-muted)]">Display Name</label>
                   <input 
                     type="text" 
-                    value={editingParam.display_name}
-                    onChange={e => setEditingParam({...editingParam, display_name: e.target.value, parameter_key: e.target.value.toLowerCase().replace(/ /g, '_')})}
+                    value={editingParam.displayName}
+                    onChange={e => setEditingParam({...editingParam, displayName: e.target.value, parameterKey: e.target.value.toLowerCase().replace(/ /g, '_')})}
                     className="w-full bg-[var(--color-background)] border border-[var(--color-border)] rounded-lg p-3 text-sm focus:border-[var(--color-primary)] outline-none"
                     placeholder="e.g. Spindle Temperature"
                   />
@@ -187,7 +199,7 @@ export default function ParameterManagerPage({ params }: { params: Promise<{ id:
                   <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-muted)]">Slug Key</label>
                   <input 
                     type="text" 
-                    value={editingParam.parameter_key}
+                    value={editingParam.parameterKey}
                     readOnly={!!editingParam.id}
                     className="w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-3 text-sm font-mono opacity-60"
                   />
@@ -221,19 +233,19 @@ export default function ParameterManagerPage({ params }: { params: Promise<{ id:
               <div className="grid grid-cols-2 gap-4 p-4 bg-[var(--color-background)] rounded-xl border border-[var(--color-border)]">
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-muted)]">Normal Min</label>
-                  <input type="number" value={editingParam.normal_min} onChange={e => setEditingParam({...editingParam, normal_min: parseFloat(e.target.value)})} className="w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-2 text-sm" />
+                  <input type="number" value={editingParam.normalMin} onChange={e => setEditingParam({...editingParam, normalMin: parseFloat(e.target.value)})} className="w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-2 text-sm" />
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-muted)]">Normal Max</label>
-                  <input type="number" value={editingParam.normal_max} onChange={e => setEditingParam({...editingParam, normal_max: parseFloat(e.target.value)})} className="w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-2 text-sm" />
+                  <input type="number" value={editingParam.normalMax} onChange={e => setEditingParam({...editingParam, normalMax: parseFloat(e.target.value)})} className="w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-2 text-sm" />
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-warning)]">Warning Threshold</label>
-                  <input type="number" value={editingParam.warning_threshold} onChange={e => setEditingParam({...editingParam, warning_threshold: parseFloat(e.target.value)})} className="w-full bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/30 rounded-lg p-2 text-sm" />
+                  <input type="number" value={editingParam.warningThreshold} onChange={e => setEditingParam({...editingParam, warningThreshold: parseFloat(e.target.value)})} className="w-full bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/30 rounded-lg p-2 text-sm" />
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-destructive)]">Critical Threshold</label>
-                  <input type="number" value={editingParam.critical_threshold} onChange={e => setEditingParam({...editingParam, critical_threshold: parseFloat(e.target.value)})} className="w-full bg-[var(--color-destructive)]/10 border border-[var(--color-destructive)]/30 rounded-lg p-2 text-sm" />
+                  <input type="number" value={editingParam.criticalThreshold} onChange={e => setEditingParam({...editingParam, criticalThreshold: parseFloat(e.target.value)})} className="w-full bg-[var(--color-destructive)]/10 border border-[var(--color-destructive)]/30 rounded-lg p-2 text-sm" />
                 </div>
               </div>
 
@@ -306,23 +318,23 @@ function ParameterRow({ param, onEdit }: { param: any, onEdit: () => void }) {
     <div className="glass-panel p-4 rounded-xl flex items-center justify-between border-l-4 border-l-[var(--color-border)] hover:border-l-[var(--color-primary)] transition-all group">
       <div className="flex items-center gap-4">
         <div className="flex flex-col">
-          <span className="text-sm font-bold group-hover:text-[var(--color-primary)] transition-colors">{param.display_name}</span>
-          <span className="text-[10px] font-mono text-[var(--color-muted)]">{param.parameter_key}</span>
+          <span className="text-sm font-bold group-hover:text-[var(--color-primary)] transition-colors">{param.displayName}</span>
+          <span className="text-[10px] font-mono text-[var(--color-muted)]">{param.parameterKey}</span>
         </div>
         <div className="h-8 w-px bg-[var(--color-border)] mx-2 hidden sm:block" />
         <div className="hidden sm:flex flex-col">
           <span className="text-[9px] uppercase font-bold text-[var(--color-muted)] tracking-widest">Normal Range</span>
-          <span className="text-xs font-mono">{param.normal_min} – {param.normal_max} {param.unit}</span>
+          <span className="text-xs font-mono">{param.normalMin} \u2013 {param.normalMax} {param.unit}</span>
         </div>
         <div className="h-8 w-px bg-[var(--color-border)] mx-2 hidden md:block" />
         <div className="hidden md:flex flex-col">
           <span className="text-[9px] uppercase font-bold text-[var(--color-warning)] tracking-widest">Warning</span>
-          <span className="text-xs font-mono text-[var(--color-warning)]">{param.direction === 'above' ? '>' : '<'} {param.warning_threshold}</span>
+          <span className="text-xs font-mono text-[var(--color-warning)]">{param.direction === 'above' ? '>' : '<'} {param.warningThreshold}</span>
         </div>
         <div className="h-8 w-px bg-[var(--color-border)] mx-2 hidden md:block" />
         <div className="hidden md:flex flex-col">
           <span className="text-[9px] uppercase font-bold text-[var(--color-destructive)] tracking-widest">Critical</span>
-          <span className="text-xs font-mono text-[var(--color-destructive)]">{param.direction === 'above' ? '>' : '<'} {param.critical_threshold}</span>
+          <span className="text-xs font-mono text-[var(--color-destructive)]">{param.direction === 'above' ? '>' : '<'} {param.criticalThreshold}</span>
         </div>
       </div>
       <button 

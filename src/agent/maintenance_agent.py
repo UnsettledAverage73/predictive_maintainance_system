@@ -53,22 +53,21 @@ class MaintenanceAgent:
         """Library of pre-built parameter templates for common machine types."""
         return {
             "Centrifugal Pump": [
-                {"key": "vibration_rms", "name": "Vibration RMS", "unit": "mm/s", "n_min": 0, "n_max": 2.5, "w_th": 3.5, "c_th": 5.0, "dir": "above"},
-                {"key": "pressure", "name": "Pressure", "unit": "bar", "n_min": 2, "n_max": 8, "w_th": 10, "c_th": 12, "dir": "above"},
-                {"key": "cavitation_index", "name": "Cavitation Index", "unit": "index", "n_min": 0, "n_max": 0.3, "w_th": 0.5, "c_th": 0.8, "dir": "above"},
-                {"key": "seal_temp", "name": "Seal Face Temperature", "unit": "°C", "n_min": 30, "n_max": 70, "w_th": 85, "c_th": 100, "dir": "above"}
+                {"parameterKey": "vibration_rms", "displayName": "Vibration RMS", "unit": "mm/s", "normalMin": 0, "normalMax": 2.5, "warningThreshold": 3.5, "criticalThreshold": 5.0, "direction": "above"},
+                {"parameterKey": "pressure", "displayName": "Pressure", "unit": "bar", "normalMin": 2, "normalMax": 8, "warningThreshold": 10, "criticalThreshold": 12, "direction": "above"},
+                {"parameterKey": "cavitation_index", "displayName": "Cavitation Index", "unit": "index", "normalMin": 0, "normalMax": 0.3, "warningThreshold": 0.5, "criticalThreshold": 0.8, "direction": "above"},
+                {"parameterKey": "seal_temp", "displayName": "Seal Face Temperature", "unit": "°C", "normalMin": 30, "normalMax": 70, "warningThreshold": 85, "criticalThreshold": 100, "direction": "above"}
             ],
             "Air Compressor": [
-                {"key": "discharge_pressure", "name": "Discharge Pressure", "unit": "bar", "n_min": 6, "n_max": 8.5, "w_th": 9.5, "c_th": 11, "dir": "above"},
-                {"key": "dew_point", "name": "Dew Point", "unit": "°C", "n_min": -20, "n_max": -10, "w_th": -5, "c_th": 0, "dir": "above"},
-                {"key": "separator_delta_p", "name": "Separator Delta-P", "unit": "bar", "n_min": 0, "n_max": 0.3, "w_th": 0.6, "c_th": 1.0, "dir": "above"}
+                {"parameterKey": "discharge_pressure", "displayName": "Discharge Pressure", "unit": "bar", "normalMin": 6, "normalMax": 8.5, "warningThreshold": 9.5, "criticalThreshold": 11, "direction": "above"},
+                {"parameterKey": "dew_point", "displayName": "Dew Point", "unit": "°C", "normalMin": -20, "normalMax": -10, "warningThreshold": -5, "criticalThreshold": 0, "direction": "above"},
+                {"parameterKey": "separator_delta_p", "displayName": "Separator Delta-P", "unit": "bar", "normalMin": 0, "normalMax": 0.3, "warningThreshold": 0.6, "criticalThreshold": 1.0, "direction": "above"}
             ],
             "CNC Milling Machine": [
-                {"key": "spindle_load", "name": "Spindle Load", "unit": "%", "n_min": 0, "n_max": 70, "w_th": 85, "c_th": 100, "dir": "above"},
-                {"key": "tool_wear_index", "name": "Tool Wear Index", "unit": "index", "n_min": 0, "n_max": 50, "w_th": 80, "c_th": 95, "dir": "above"},
-                {"key": "coolant_flow", "name": "Coolant Flow Rate", "unit": "L/min", "n_min": 15, "n_max": 25, "w_th": 10, "c_th": 5, "dir": "below"}
+                {"parameterKey": "spindle_load", "displayName": "Spindle Load", "unit": "%", "normalMin": 0, "normalMax": 70, "warningThreshold": 85, "criticalThreshold": 100, "direction": "above"},
+                {"parameterKey": "tool_wear_index", "displayName": "Tool Wear Index", "unit": "index", "normalMin": 0, "normalMax": 50, "warningThreshold": 80, "criticalThreshold": 95, "direction": "above"},
+                {"parameterKey": "coolant_flow", "displayName": "Coolant Flow Rate", "unit": "L/min", "normalMin": 15, "normalMax": 25, "warningThreshold": 10, "criticalThreshold": 5, "direction": "below"}
             ]
-            # ... can add more templates as needed
         }
 
     def get_orchestrator_response(self, query: str, machine_id: str = "GLOBAL") -> Dict[str, Any]:

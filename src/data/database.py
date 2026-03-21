@@ -105,34 +105,36 @@ def init_db():
     
     conn.commit()
     conn.close()
+    
+    # 5. Seed initial data if empty
+    seed_initial_data()
+    
     print(f"--- [DATABASE UPDATED] Schema V2 Live at {DB_PATH} ---")
 
-def add_equipment(id, name, production_line, protocol):
+def seed_initial_data():
+    """Populates the database with initial machines and parameters if empty."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    try:
-        # Create table if it doesn't exist
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS equipment_metadata (
-                id TEXT PRIMARY KEY,
-                name TEXT,
-                production_line TEXT,
-                protocol TEXT,
-                status TEXT DEFAULT 'online',
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        cursor.execute(
-            "INSERT INTO equipment_metadata (id, name, production_line, protocol) VALUES (?, ?, ?, ?)",
-            (id, name, production_line, protocol)
-        )
-        conn.commit()
-        return True
-    except Exception as e:
-        print(f"DB Error: {e}")
-        return False
-    finally:
-        conn.close()
+    cursor.execute("SELECT COUNT(*) FROM equipment")
+    count = cursor.fetchone()[0]
+    conn.close()
+
+    if count == 0:
+        print("--- [SEEDING] Initializing Default Industrial Assets ---")
+        initial_machines = [
+            ("CNC001", "Precision CNC Lathe Alpha", "Line 1 - Machining", "MQTT"),
+            ("CONV01", "Main Assembly Conveyor", "Line 2 - Assembly", "OPC-UA"),
+            ("HYD005", "High-Pressure Hydraulic Press", "Line 1 - Machining", "Modbus"),
+            ("EXT002", "Polymer Extrusion Line", "Line 3 - Packaging", "MQTT")
+        ]
+        for eq_id, name, line, protocol in initial_machines:
+            add_equipment(eq_id, name, line, protocol)
+            seed_common_parameters(eq_id)
+            # Add some machine-specific parameters too
+            if eq_id == "CNC001":
+                add_parameter(eq_id, "spindle_load", "Spindle Load", "%", n_min=0, n_max=70, w_th=85, c_th=100)
+            elif eq_id == "HYD005":
+                add_parameter(eq_id, "oil_temp", "Oil Temperature", "°C", n_min=30, n_max=60, w_th=75, c_th=85)
 
 def add_equipment(eq_id, name, line, protocol, agent_id=None):
     """

@@ -78,12 +78,25 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
   }, [idStr]);
 
   const handleMitigate = async () => {
+    // Optimistic UI update
+    const previousMachine = machine;
+    if (machine) {
+      setMachine({
+        ...machine,
+        status: 'online',
+        riskScore: Math.max(0, machine.riskScore - 30)
+      });
+    }
+
     setIsMitigating(true);
     try {
       await api.mitigateRisk(idStr);
-      alert("Mitigation command dispatched: Throttling load.");
+      // In a real app, you might want to show a small toast instead of a blocking alert
+      console.log("Mitigation command dispatched: Throttling load.");
     } catch (error) {
       console.error("Mitigation failed:", error);
+      // Rollback on error
+      setMachine(previousMachine);
     } finally {
       setIsMitigating(false);
     }
@@ -170,7 +183,7 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
               <h3 className="font-semibold text-sm uppercase tracking-widest text-[var(--color-muted)]">Telemetry Live (Last 24h)</h3>
             </div>
             {telemetry.length > 0 ? (
-              <TelemetryChart data={telemetry} className="border-0 bg-transparent shadow-none" />
+              <TelemetryChart data={telemetry} machineId={idStr} className="border-0 bg-transparent shadow-none" />
             ) : (
               <div className="h-[300px] flex items-center justify-center text-[var(--color-muted)] text-sm">No telemetry data available for this machine.</div>
             )}

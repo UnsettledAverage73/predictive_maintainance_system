@@ -3,52 +3,22 @@ import { useEffect, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
 export interface LogEntry {
-  id: string;
-  timestamp: string;
-  severity: 'INFO' | 'WARN' | 'ERROR';
+  timestamp?: string;
+  severity?: 'INFO' | 'WARN' | 'ERROR' | string;
   message: string;
+  status?: string;
 }
 
-export function LiveLogPanel({ active }: { active: boolean }) {
-  const [logs, setLogs] = useState<LogEntry[]>([]);
+export function LiveLogPanel({ active, logs: externalLogs }: { active: boolean, logs?: LogEntry[] }) {
+  const [internalLogs, setInternalLogs] = useState<any[]>([]);
   const parentRef = useRef<HTMLDivElement>(null);
 
-  // Mock streaming logic
-  useEffect(() => {
-    if (!active) return;
-    
-    const mockMessages = [
-      { s: 'INFO', m: 'Initializing cloud connection handshake...' },
-      { s: 'INFO', m: 'Validating AWS credentials format...' },
-      { s: 'INFO', m: 'Authenticating with AWS IAM...' },
-      { s: 'INFO', m: 'Locating VPC vpc-0abc1234...' },
-      { s: 'WARN', m: 'Security group missing explicit outbound rule, using default.' },
-      { s: 'INFO', m: 'Checking private subnet routing table...' },
-      { s: 'INFO', m: 'Agent endpoint reachable at 10.0.1.45:443' },
-      { s: 'INFO', m: 'Establishing secure tunnel...' },
-      { s: 'INFO', m: 'Connection established successfully.' }
-    ];
-
-    let i = 0;
-    const interval = setInterval(() => {
-      if (i < mockMessages.length) {
-        const msg = mockMessages[i];
-        const now = new Date();
-        const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
-        setLogs(prev => [...prev, { id: Math.random().toString(), timestamp: timeStr, severity: msg.s as any, message: msg.m }]);
-        i++;
-      } else {
-        clearInterval(interval);
-      }
-    }, 400);
-
-    return () => clearInterval(interval);
-  }, [active]);
+  const logs = externalLogs || internalLogs;
 
   const rowVirtualizer = useVirtualizer({
     count: logs.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 36, // estimated row height
+    estimateSize: () => 36,
   });
 
   // Auto scroll
@@ -105,6 +75,8 @@ export function LiveLogPanel({ active }: { active: boolean }) {
           <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
             {rowVirtualizer.getVirtualItems().map((virtualRow) => {
               const log = logs[virtualRow.index];
+              const severity = (log.severity || log.status || 'INFO').toUpperCase();
+              const timestamp = log.timestamp || new Date().toLocaleTimeString();
               return (
                 <div
                   key={virtualRow.key}
@@ -118,10 +90,10 @@ export function LiveLogPanel({ active }: { active: boolean }) {
                   }}
                   className="flex items-start space-x-3 group py-1"
                 >
-                  <span className="text-slate-600 shrink-0 select-none">[{log.timestamp}]</span>
+                  <span className="text-slate-600 shrink-0 select-none">[{timestamp}]</span>
                   <div className="flex items-center space-x-2 w-16 shrink-0 pt-0.5">
-                    <span className={`w-2 h-2 rounded-full ${getSeverityStyle(log.severity)}`}></span>
-                    <span className={`font-semibold ${log.severity === 'INFO' ? 'text-teal-400' : log.severity === 'WARN' ? 'text-amber-400' : 'text-red-400'}`}>{log.severity}</span>
+                    <span className={`w-2 h-2 rounded-full ${getSeverityStyle(severity)}`}></span>
+                    <span className={`font-semibold ${severity === 'INFO' ? 'text-teal-400' : severity === 'WARN' ? 'text-amber-400' : 'text-red-400'}`}>{severity}</span>
                   </div>
                   <span className="text-slate-300 break-words flex-1 leading-snug">{log.message}</span>
                 </div>
