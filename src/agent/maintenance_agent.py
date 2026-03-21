@@ -73,19 +73,40 @@ class MaintenanceAgent:
     def get_orchestrator_response(self, query: str, machine_id: str = "GLOBAL") -> Dict[str, Any]:
         """
         The Sovereign Orchestrator: 
-        Retrieves context from SQL (Dynamic Parameters), JSON, and Pinecone before reasoning.
+        Retrieves context from SQL (Dynamic Parameters + Metadata), JSON, and Pinecone.
         """
         from src.data import database
 
-        # 1. Fetch Dynamic Parameter Context
+        # 1. Fetch Machine Metadata & Parameters
+        machine_metadata_str = ""
         param_context_str = ""
+        
         if machine_id != "GLOBAL":
+            # Fetch metadata from 'equipment' table
+            import sqlite3
+            conn = sqlite3.connect("data/factory_ops.db")
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM equipment WHERE id = ?", (machine_id,))
+            m_row = cursor.fetchone()
+            conn.close()
+            
+            if m_row:
+                machine_metadata_str = f"""
+                ASSET METADATA:
+                - Name: {m_row['name']}
+                - ID: {m_row['id']}
+                - Production Line: {m_row['production_line']}
+                - Last Maintenance: {m_row['last_maintenance_date']}
+                - Next Scheduled: {m_row['next_scheduled_date']}
+                - MTBF: {m_row['mtbf']} hours
+                """
+
             params = database.get_machine_parameters(machine_id)
             param_details = []
             for p in params:
-                if p['is_used_for_prediction']:
-                    # In a real scenario, we'd fetch latest telemetry for each param
-                    detail = f"- {p['display_name']} ({p['parameter_key']}): unit={p['unit']}, normal={p['normal_min']}-{p['normal_max']}, warning={p['warning_threshold']}, critical={p['critical_threshold']}. {p['description'] or ''}"
+                if p['isUsedForPrediction']:
+                    detail = f"- {p['displayName']} ({p['parameterKey']}): unit={p['unit']}, normal={p['normalMin']}-{p['normalMax']}, warning={p['warningThreshold']}, critical={p['criticalThreshold']}. {p['description'] or ''}"
                     param_details.append(detail)
             if param_details:
                 param_context_str = "\nDynamic Parameter Registry:\n" + "\n".join(param_details)
@@ -97,16 +118,21 @@ class MaintenanceAgent:
         import sqlite3
         conn = sqlite3.connect("data/factory_ops.db")
         cursor = conn.cursor()
-        cursor.execute("SELECT severity, reason FROM ai_alerts ORDER BY timestamp DESC LIMIT 3")
+        cursor.execute("SELECT severity, reason FROM ai_alerts WHERE equipment_id = ? OR ? = 'GLOBAL' ORDER BY timestamp DESC LIMIT 3", (machine_id, machine_id))
         sql_context = [f"{r[0]}: {r[1]}" for r in cursor.fetchall()]
         conn.close()
 
         # 4. Construct Deep Reasoning Prompt
         system_prompt = f"""
         You are the Plant-wide Orchestrator AI. 
+        Only use the provided context below. If data is missing, say you don't have records for it.
+        
+        {machine_metadata_str}
+        
         Context from Sovereign Memory (RAG): {vector_context}
         Context from Live SQL Ledger: {sql_context}
         {param_context_str}
+        
         Current Target Machine: {machine_id}
         """
         
@@ -116,9 +142,9 @@ class MaintenanceAgent:
         return {
             "message": response,
             "sources": [
-                {"name": "SQLite: machine_parameters", "description": "Dynamic asset configuration"},
-                {"name": "Vector: Sovereign Memory", "description": f"Retrieved: {vector_context[:50]}..."},
-                {"name": "JSON: maintenance_logs", "description": "Historical servicing patterns"}
+                {"name": "SQLite: equipment_metadata", "description": "Asset registry & maintenance dates"},
+                {"name": "SQLite: machine_parameters", "description": "Dynamic threshold configuration"},
+                {"name": "Vector: Sovereign Memory", "description": f"Retrieved: {vector_context[:50]}..."}
             ],
             "confidence": 94.2
         }
@@ -157,9 +183,9 @@ class MaintenanceAgent:
                     metric="cosine",
                     spec=ServerlessSpec(cloud="aws", region="us-east-1")
                 )
-                while not self.pc.describe_index(self.index_name).status['ready']:
-                    time.sleep(2)
-            self.index = self.pc.Index(self.index_name)
+                print(f"Creating Pinecone index {self.index_name}. It will be available shortly.")
+            else:
+                self.index = self.pc.Index(self.index_name)
         except Exception as e:
             print(f"Pinecone Init Error: {e}")
             self.pc = None
@@ -230,23 +256,58 @@ class MaintenanceAgent:
         print(f"--- [GROQ] Reasoning ---")
         return self._get_cloud_inference(system_prompt, user_content)
 
-    def speech_to_text(self, audio_bytes: bytes, language_code: str = "hi-IN") -> str:
+    def speech_to_text(
+        self,
+        audio_bytes: bytes,
+        language_code: str = "hi-IN",
+        filename: str = "audio.webm",
+        content_type: str = "audio/webm"
+    ) -> str:
         """
         Sarvam AI: Converts speech (audio bytes) into text.
         Supports 22 Indian languages.
         """
         if not self.sarvam_key:
             return "Sarvam API Key not configured."
-            
-        url = "https://api.sarvam.ai/speech-to-text"
-        headers = {"api-subscription-key": self.sarvam_key}
-        files = {"file": ("audio.wav", audio_bytes, "audio/wav")}
-        data = {"model": "saaras:v1", "language_code": language_code} # v1 as per most common examples
+
+        # Sanitize content_type (e.g. "audio/webm;codecs=opus" -> "audio/webm")
+        clean_content_type = content_type.split(";")[0].strip().lower()
         
+        codec_map = {
+            "audio/wav": "wav",
+            "audio/x-wav": "wav",
+            "audio/wave": "wav",
+            "audio/mpeg": "mp3",
+            "audio/mp3": "mp3",
+            "audio/aac": "aac",
+            "audio/ogg": "ogg",
+            "audio/opus": "opus",
+            "audio/flac": "flac",
+            "audio/mp4": "mp4",
+            "audio/x-m4a": "m4a",
+            "audio/webm": "webm",
+        }
+        input_audio_codec = codec_map.get(clean_content_type, "webm")
+
         try:
-            response = requests.post(url, headers=headers, files=files, data=data)
-            response.raise_for_status()
-            return response.json().get("transcript", "No transcript found.")
+            response = self.sarvam_client.speech_to_text.transcribe(
+                file=(filename, audio_bytes, clean_content_type),
+                model="saaras:v3",
+                mode="transcribe",
+                language_code=language_code,
+                input_audio_codec=input_audio_codec
+            )
+
+            transcript = getattr(response, "transcript", None)
+            if isinstance(transcript, str) and transcript.strip():
+                return transcript
+
+            if isinstance(response, dict):
+                transcript = response.get("transcript")
+                if isinstance(transcript, str) and transcript.strip():
+                    return transcript
+
+            return "No transcript found."
         except Exception as e:
             return f"STT Error: {str(e)}"
 
@@ -302,29 +363,35 @@ class MaintenanceAgent:
             return ocr_engine.extract_text(image_bytes)
 
     def _get_sarvam_inference(self, system_prompt, user_content) -> str:
+        if not self.sarvam_client or not self.sarvam_key:
+            return "Sarvam API Key not configured."
+
         try:
-            # Check if SarvamAI SDK has chat completion, if not use requests
             if hasattr(self.sarvam_client, "chat") and hasattr(self.sarvam_client.chat, "completions"):
-                response = self.sarvam_client.chat.completions.create(
+                response = self.sarvam_client.chat.completions(
                     model=self.sarvam_model,
                     messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_content}],
                     temperature=0.1
                 )
-                return response.choices[0].message.content
-            else:
-                # Manual requests fallback for chat
-                url = "https://api.sarvam.ai/chat/completions"
-                headers = {
-                    "api-subscription-key": self.sarvam_key,
-                    "Content-Type": "application/json"
-                }
-                payload = {
-                    "model": self.sarvam_model,
-                    "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_content}]
-                }
-                response = requests.post(url, headers=headers, json=payload)
-                response.raise_for_status()
-                return response.json()["choices"][0]["message"]["content"]
+                choice = response.choices[0] if getattr(response, "choices", None) else None
+                if choice is None:
+                    return "Error: Sarvam returned no choices."
+
+                message = getattr(choice, "message", None)
+                if message is not None:
+                    content = getattr(message, "content", None)
+                    if isinstance(content, str) and content.strip():
+                        return content
+
+                if isinstance(choice, dict):
+                    msg = choice.get("message", {})
+                    content = msg.get("content")
+                    if isinstance(content, str) and content.strip():
+                        return content
+
+                return "Error: Sarvam response did not contain message content."
+
+            return "Error: Sarvam chat client unavailable."
         except Exception as e:
             return f"Error: {e}"
 
