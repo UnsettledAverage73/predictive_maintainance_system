@@ -28,17 +28,29 @@ export const api = {
   getAlerts: () => fetchApi("/api/alerts"),
   getSchedule: () => fetchApi("/api/schedule"),
   chat: (payload: any) => fetchApi("/api/chat", { method: "POST", body: JSON.stringify(payload) }),
-  chatVoice: (formData: FormData) => fetch(`${API_BASE_URL}/api/chat/voice`, { 
-    method: "POST", 
-    body: formData 
-  }).then(res => res.json()),
-  chatVision: (formData: FormData) => fetch(`${API_BASE_URL}/api/chat/vision`, { 
-    method: "POST", 
-    body: formData 
-  }).then(res => res.json()),
+  chatVoice: async (formData: FormData) => {
+    const response = await fetch(`${API_BASE_URL}/api/chat/voice`, {
+      method: "POST",
+      body: formData
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: "Unknown error" }));
+      throw new Error(error.detail || response.statusText);
+    }
+    return response.json();
+  },
+  chatVision: async (formData: FormData) => {
+    const response = await fetch(`${API_BASE_URL}/api/chat/vision`, {
+      method: "POST",
+      body: formData
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: "Unknown error" }));
+      throw new Error(error.detail || response.statusText);
+    }
+    return response.json();
+  },
   logRepair: (payload: any) => fetchApi("/api/logs", { method: "POST", body: JSON.stringify(payload) }),
-  getMachineTelemetry: (id: string) => fetchApi(`/api/telemetry/${id}`),
-  getMachineHistory: (id: string) => fetchApi(`/api/history/${id}`),
   mitigateRisk: (id: string) => fetchApi(`/api/equipment/${id}/mitigate`, { method: "POST" }),
   getWhatsAppNumber: () => fetchApi("/api/settings/whatsapp"),
   updateWhatsAppNumber: (number: string) => fetchApi("/api/settings/whatsapp", { method: "POST", body: JSON.stringify({ number }) }),
@@ -46,5 +58,6 @@ export const api = {
   addMachineParameter: (id: string, payload: any) => fetchApi(`/api/machines/${id}/parameters`, { method: "POST", body: JSON.stringify(payload) }),
   getTemplates: () => fetchApi("/api/machines/templates"),
   applyTemplate: (id: string, templateName: string) => fetchApi(`/api/machines/${id}/parameters/template/${templateName}`, { method: "POST" }),
+  previewCsv: (id: string, formData: FormData) => fetch(`${API_BASE_URL}/api/machines/${id}/import/preview`, { method: "POST", body: formData }).then(res => res.json()),
+  confirmCsv: (id: string, formData: FormData) => fetch(`${API_BASE_URL}/api/machines/${id}/import/confirm`, { method: "POST", body: formData }).then(res => res.json()),
 };
-

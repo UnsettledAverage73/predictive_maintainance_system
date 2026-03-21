@@ -3,7 +3,7 @@
 import { use, useState, useEffect } from "react";
 import Link from "next/link";
 import dynamic from 'next/dynamic';
-import { ChevronRight, MessageSquare, Plus, FileDown, Settings2 } from "lucide-react";
+import { ChevronRight, MessageSquare, Plus, FileDown, Settings2, Upload } from "lucide-react";
 import { ProtocolBadge } from "@/components/machines/ProtocolBadge";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { RiskBadge } from "@/components/ui/RiskBadge";
@@ -128,6 +128,12 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
           <p className="text-sm font-mono text-[var(--color-muted)]">ID: {idStr}</p>
         </div>
         <div className="flex gap-2">
+          <Link
+            href={`/dashboard/machines/${idStr}/import/csv`}
+            className="bg-[var(--color-surface)] border border-[var(--color-border)] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[var(--color-border)]/50 transition-all flex items-center gap-2"
+          >
+            <Upload className="w-4 h-4" /> CSV Ingest
+          </Link>
           <Link
             href={`/dashboard/machines/${idStr}/parameters`}
             className="bg-[var(--color-surface)] border border-[var(--color-border)] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[var(--color-border)]/50 transition-all flex items-center gap-2"

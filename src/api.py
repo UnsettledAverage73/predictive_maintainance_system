@@ -17,9 +17,6 @@ from src.agent.reporter import SovereignReporter
 from src.agent.cloud_provisioner import router as cloud_router
 from src.data.database import init_db
 
-# Initialize Database
-init_db()
-
 # Path Configurations
 DATA_PATH = "data/sample_maintenance_data.json"
 DB_PATH = "data/factory_ops.db"
@@ -71,17 +68,25 @@ class WhatsAppRequest(BaseModel):
 
 # App Initialization
 app = FastAPI(title="Sovereign Predictive Maintenance API")
+
+# Middleware MUST be added before routes
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.include_router(cloud_router)
 
+# Initialize Database
+init_db()
+
+# Initialize Agent after DB and models
 agent = MaintenanceAgent(DATA_PATH)
 reporter = SovereignReporter()
+
+# Include Routers
+app.include_router(cloud_router)
 
 # Helper Functions
 def get_config():
@@ -96,11 +101,29 @@ def save_config(config):
         json.dump(config, f)
 
 # Endpoints
+@app.get("/api/schedule")
+async def get_schedule():
+    """Returns the master maintenance schedule from the Asset Layer."""
+    from src.data.database import get_all_equipment_metadata
+    metadata = get_all_equipment_metadata()
+    schedule = []
+    for eq in metadata:
+        schedule.append({
+            "id": f"TASK-{eq['id']}",
+            "machineId": eq["id"],
+            "machineName": eq["name"],
+            "task": "Periodic Calibration & Inspection",
+            "date": eq.get("next_scheduled_date", "2024-12-31"),
+            "status": "pending",
+            "priority": "medium",
+            "assignedTo": "Rajan Kumar"
+        })
+    return schedule
+
 @app.get("/api/machines/{machine_id}/parameters")
 async def get_machine_params(machine_id: str):
     from src.data.database import get_machine_parameters
     params = get_machine_parameters(machine_id)
-    # Map to Frontend Model if needed (though most seem okay, let's be explicit)
     return [{
         "id": p["id"],
         "machineId": p["machine_id"],
@@ -112,6 +135,7 @@ async def get_machine_params(machine_id: str):
         "warningThreshold": p["warning_threshold"],
         "criticalThreshold": p["critical_threshold"],
         "direction": p["direction"],
+        "category": p["category"],
         "isVisible": bool(p["is_visible"]),
         "isUsedForPrediction": bool(p["is_used_for_prediction"]),
         "description": p["description"]
@@ -120,7 +144,19 @@ async def get_machine_params(machine_id: str):
 @app.post("/api/machines/{machine_id}/parameters")
 async def add_machine_param(machine_id: str, request: ParameterRequest):
     from src.data.database import add_parameter
-    success = add_parameter(machine_id, **request.dict())
+    success = add_parameter(
+        machine_id,
+        key=request.parameter_key,
+        name=request.display_name,
+        unit=request.unit,
+        normal_min=request.normal_min,
+        normal_max=request.normal_max,
+        warning_threshold=request.warning_threshold,
+        critical_threshold=request.critical_threshold,
+        direction=request.direction,
+        description=request.description,
+        category="custom"
+    )
     if not success:
         raise HTTPException(status_code=500, detail="Failed to add parameter")
     return {"status": "success"}
@@ -190,7 +226,6 @@ async def get_all_equipment():
                 cursor.execute("SELECT temperature, vibration FROM sensor_readings WHERE equipment_id = ? ORDER BY timestamp DESC LIMIT 1", (eq_id,))
                 last = cursor.fetchone() or (0, 0)
                 
-                # Map to Frontend Machine Model (camelCase)
                 results.append({
                     "id": eq["id"],
                     "name": eq["name"],
@@ -214,7 +249,6 @@ async def get_all_equipment():
             return results
         except Exception as e:
             print(f"API Error: {e}")
-            # Fallback mapping even on error
             return [{
                 "id": m["id"],
                 "name": m["name"],
@@ -245,8 +279,6 @@ async def telemetry_websocket(websocket: WebSocket, equipment_id: str):
     await websocket.accept()
     try:
         while True:
-            # In a real app, this would react to DB changes or MQTT
-            # For demo, we poll and send latest point
             conn = sqlite3.connect(DB_PATH)
             cursor = conn.cursor()
             cursor.execute("SELECT timestamp, temperature, vibration FROM sensor_readings WHERE equipment_id = ? ORDER BY timestamp DESC LIMIT 1", (equipment_id,))
@@ -254,7 +286,7 @@ async def telemetry_websocket(websocket: WebSocket, equipment_id: str):
             conn.close()
             if row:
                 await websocket.send_json({"time": row[0], "temperature": row[1], "vibration": row[2]})
-            await asyncio.sleep(2) # 2s updates
+            await asyncio.sleep(2)
     except WebSocketDisconnect:
         pass
 
@@ -282,7 +314,19 @@ async def chat_with_agent(request: ChatRequest):
 @app.post("/api/chat/voice")
 async def chat_voice(file: UploadFile = File(...), machineId: str = Form("GLOBAL")):
     audio_bytes = await file.read()
-    transcript = agent.speech_to_text(audio_bytes)
+    transcript = agent.speech_to_text(
+        audio_bytes,
+        filename=file.filename or "audio.webm",
+        content_type=file.content_type or "audio/webm"
+    )
+    if transcript.startswith("STT Error:") or transcript == "No transcript found.":
+        return {
+            "transcript": transcript,
+            "message": transcript,
+            "audio": "",
+            "sources": [],
+            "confidence": 0
+        }
     result = agent.get_orchestrator_response(query=transcript, machine_id=machineId)
     audio_response = agent.text_to_speech(result["message"])
     return {"transcript": transcript, "message": result["message"], "audio": audio_response, "sources": result["sources"], "confidence": result["confidence"]}
@@ -327,6 +371,86 @@ async def mitigate_risk(equipment_id: str):
     with open(COMMAND_FILE, "w") as f: json.dump(command, f)
     return {"status": "Command Dispatched", "action": "Load Reduction Active"}
 
+class CSVConfirmRequest(BaseModel):
+    confirmed_mappings: List[dict] # {csv_col: str, parameter_key: str}
+    timestamp_column: str
+    timestamp_format: Optional[str] = "ISO8601"
+
+@app.post("/api/machines/{machine_id}/import/preview")
+async def preview_csv_import(machine_id: str, file: UploadFile = File(...)):
+    import pandas as pd
+    import io
+    
+    content = await file.read()
+    df = pd.read_csv(io.BytesIO(content), nrows=5)
+    headers = df.columns.tolist()
+    sample_rows = df.values.tolist()
+    
+    # Fetch existing parameters for this machine
+    from src.data.database import get_machine_parameters
+    existing_params = get_machine_parameters(machine_id)
+    param_list = [{"key": p["parameter_key"], "name": p["display_name"]} for p in existing_params]
+    
+    # AI-Powered Mapping Suggestion
+    mapping_prompt = f"""
+    Headers: {headers}
+    Sample Data: {sample_rows[0] if sample_rows else "No data"}
+    Existing Parameters: {param_list}
+    
+    Map each header to an existing parameter key. If no match, return null for that header.
+    Respond ONLY with a JSON list of objects: {{"csv_col": "header_name", "parameter_key": "matched_key", "confidence": 0.9}}
+    """
+    
+    try:
+        mapping_json = agent._get_cloud_inference("You are a data mapping expert.", mapping_prompt)
+        # Clean potential markdown from response
+        if "```json" in mapping_json:
+            mapping_json = mapping_json.split("```json")[1].split("```")[0].strip()
+        elif "```" in mapping_json:
+            mapping_json = mapping_json.split("```")[1].split("```")[0].strip()
+            
+        suggested_mappings = json.loads(mapping_json)
+    except Exception as e:
+        print(f"AI Mapping Error: {e}")
+        suggested_mappings = [{"csv_col": h, "parameter_key": None, "confidence": 0} for h in headers]
+        
+    return {
+        "headers": headers,
+        "sample_rows": sample_rows,
+        "suggested_mappings": suggested_mappings,
+        "timestamp_column": "timestamp" if "timestamp" in [h.lower() for h in headers] else headers[0]
+    }
+
+@app.post("/api/machines/{machine_id}/import/confirm")
+async def confirm_csv_import(
+    machine_id: str, 
+    file: UploadFile = File(...), 
+    mappings: str = Form(...), 
+    timestamp_column: str = Form(...)):
+    import pandas as pd
+    import io
+    from src.data.database import log_telemetry_point
+    
+    content = await file.read()
+    df = pd.read_csv(io.BytesIO(content))
+    confirmed_mappings = json.loads(mappings)
+    
+    rows_imported = 0
+    for _, row in df.iterrows():
+        for mapping in confirmed_mappings:
+            csv_col = mapping["csv_col"]
+            param_key = mapping["parameter_key"]
+            if param_key and csv_col in row:
+                val = row[csv_col]
+                # Log to the new dynamic telemetry table
+                try:
+                    log_telemetry_point(machine_id, param_key, float(val) if not isinstance(val, str) else None, str(val) if isinstance(val, str) else None)
+                except:
+                    log_telemetry_point(machine_id, param_key, None, str(val))
+        rows_imported += 1
+        
+    return {"status": "success", "rows_imported": rows_imported}
+
 @app.get("/api/factory/usage")
 async def get_factory_usage():
     """Returns aggregated machine usage percentages."""
@@ -340,7 +464,6 @@ async def get_factory_usage():
             conn = sqlite3.connect(DB_PATH)
             cursor = conn.cursor()
             for eq in metadata:
-                # Use vibration as proxy for usage
                 cursor.execute("SELECT vibration FROM sensor_readings WHERE equipment_id = ? ORDER BY timestamp DESC LIMIT 1", (eq["id"],))
                 row = cursor.fetchone()
                 vibration = row[0] if row else 0
