@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Server, CalendarDays, MessageSquare, Settings, AlertTriangle, PlusCircle, ChevronLeft, ChevronRight, Shield } from 'lucide-react';
+import { LayoutDashboard, Server, CalendarDays, MessageSquare, Settings, AlertTriangle, PlusCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useMediaQuery } from '@/lib/hooks/useMediaQuery';
 
@@ -16,7 +16,6 @@ const navItems = [
 
 const adminItems = [
   { icon: PlusCircle, label: 'Onboard Machine', href: '/dashboard/onboarding' },
-  { icon: Shield, label: 'Security', href: '/settings/security' },
   { icon: Settings, label: 'Settings', href: '/settings' },
 ];
 
