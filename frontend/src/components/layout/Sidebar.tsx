@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { LayoutDashboard, Server, CalendarDays, MessageSquare, Settings, AlertTriangle, PlusCircle, ChevronLeft, ChevronRight, Shield } from 'lucide-react';
