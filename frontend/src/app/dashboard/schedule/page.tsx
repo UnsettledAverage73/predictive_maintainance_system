@@ -24,7 +24,37 @@ export default function SchedulePage() {
     };
 
     fetchSchedule();
+
+    // Real-time WebSocket Subscription
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.hostname}:8000/ws/schedule`;
+    const ws = new WebSocket(wsUrl);
+
+    ws.onmessage = (event) => {
+      const updatedTask = JSON.parse(event.data);
+      setTasks(prev => {
+        const exists = prev.find(t => t.id === updatedTask.id);
+        if (exists) {
+          return prev.map(t => t.id === updatedTask.id ? updatedTask : t);
+        } else {
+          return [...prev, updatedTask].sort((a, b) => 
+            new Date(a.due_date).getTime() - new Date(b.due_date).getTime()
+          );
+        }
+      });
+    };
+
+    return () => ws.close();
   }, []);
+
+  const onUpdateTask = async (taskId: number, status: string) => {
+    try {
+      await api.updateTask(taskId, { status });
+      // The state will be updated via WebSocket message
+    } catch (error) {
+      console.error("Failed to update task:", error);
+    }
+  };
 
   const pendingTasks = tasks.filter(t => t.status === 'pending');
   const inProgressTasks = tasks.filter(t => t.status === 'in_progress');
@@ -95,7 +125,7 @@ export default function SchedulePage() {
             <span className="bg-[#8B949E]/20 text-[#8B949E] px-2 py-0.5 rounded text-xs font-bold">{pendingTasks.length}</span>
           </div>
           <div className="flex flex-col gap-3 pb-4">
-            {pendingTasks.map((t) => <TaskCard key={t.id} task={t} />)}
+            {pendingTasks.map((t) => <TaskCard key={t.id} task={t} onUpdate={onUpdateTask} />)}
             {pendingTasks.length === 0 && (
                <div className="p-8 text-center text-[var(--color-muted)] text-sm font-medium border-2 border-dashed border-[var(--color-border)] rounded-xl">No pending tasks</div>
             )}
@@ -108,7 +138,7 @@ export default function SchedulePage() {
             <span className="bg-[var(--color-warning)]/20 text-[var(--color-warning)] px-2 py-0.5 rounded text-xs font-bold">{inProgressTasks.length}</span>
           </div>
           <div className="flex flex-col gap-3 pb-4">
-            {inProgressTasks.map((t) => <TaskCard key={t.id} task={t} />)}
+            {inProgressTasks.map((t) => <TaskCard key={t.id} task={t} onUpdate={onUpdateTask} />)}
             {inProgressTasks.length === 0 && (
                <div className="p-8 text-center text-[var(--color-muted)] text-sm font-medium border-2 border-dashed border-[var(--color-border)] rounded-xl">No active tasks</div>
             )}
@@ -121,7 +151,7 @@ export default function SchedulePage() {
             <span className="bg-[var(--color-success)]/20 text-[var(--color-success)] px-2 py-0.5 rounded text-xs font-bold">{completedTasks.length}</span>
           </div>
           <div className="flex flex-col gap-3 pb-4">
-            {completedTasks.map((t) => <TaskCard key={t.id} task={t} />)}
+            {completedTasks.map((t) => <TaskCard key={t.id} task={t} onUpdate={onUpdateTask} />)}
             {completedTasks.length === 0 && (
                <div className="p-8 text-center text-[var(--color-muted)] text-sm font-medium border-2 border-dashed border-[var(--color-border)] rounded-xl">No completed tasks</div>
             )}

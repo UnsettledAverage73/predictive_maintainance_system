@@ -6,6 +6,7 @@ google-genai
 groq
 pinecone
 sarvamai
+twilio
 # Data & Visualisation
 streamlit
 pandas

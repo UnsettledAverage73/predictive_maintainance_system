@@ -23,14 +23,17 @@ const adminItems = [
 export function Sidebar() {
   const pathname = usePathname();
   const { isTablet, isDesktop } = useMediaQuery();
-  const [isCollapsed, setIsCollapsed] = useState(() => {
-    if (typeof window === 'undefined') {
-      return false;
-    }
-
-    return localStorage.getItem('sidebar-collapsed') === 'true';
-  });
+  const [isCollapsed, setIsCollapsed] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('sidebar-collapsed');
+    if (saved !== null) {
+      setIsCollapsed(saved === 'true');
+    }
+    setMounted(true);
+  }, []);
 
   const handleToggle = () => {
     const val = !isCollapsed;
@@ -38,7 +41,7 @@ export function Sidebar() {
     localStorage.setItem('sidebar-collapsed', String(val));
   };
 
-  const collapsed = isTablet || (isDesktop && isCollapsed);
+  const collapsed = mounted && (isTablet || (isDesktop && isCollapsed));
   const isExpandedTablet = isTablet && isHovered;
 
   return (

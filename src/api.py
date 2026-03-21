@@ -1,27 +1,32 @@
 import os
-import json
 import sqlite3
 import base64
 import asyncio
 import time
+import json
+import redis.asyncio as redis
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from twilio.rest import Client
-
 from src.agent.maintenance_agent import MaintenanceAgent
 from src.data.analytics import calculate_failure_probability
 from src.agent.reporter import SovereignReporter
 from src.agent.cloud_provisioner import router as cloud_router
 from src.data.database import init_db
+from src.notifications.whatsapp import get_config, save_config
 
 # Path Configurations
 DATA_PATH = "data/sample_maintenance_data.json"
 DB_PATH = "data/factory_ops.db"
 COMMAND_FILE = "data/commands.json"
-CONFIG_FILE = "data/config.json"
+
+# Redis Configuration
+REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+REDIS_CHANNEL = "telemetry_stream"
+SCHEDULE_CHANNEL = "schedule_updates"
 
 # Models
 class ChatRequest(BaseModel):
@@ -66,6 +71,11 @@ class ConnectionTestRequest(BaseModel):
 class WhatsAppRequest(BaseModel):
     number: str
 
+class TaskUpdate(BaseModel):
+    status: str
+    notes: Optional[str] = None
+    operator: Optional[str] = None
+
 # App Initialization
 app = FastAPI(title="Sovereign Predictive Maintenance API")
 
@@ -88,37 +98,137 @@ reporter = SovereignReporter()
 # Include Routers
 app.include_router(cloud_router)
 
-# Helper Functions
-def get_config():
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, "r") as f:
-            return json.load(f)
-    return {"whatsapp_number": os.getenv("MY_PHONE_NUMBER", "")}
+from src.auth import (
+    Token, User, authenticate_user, create_access_token, 
+    get_current_user, role_required, ACCESS_TOKEN_EXPIRE_MINUTES
+)
+from fastapi.security import OAuth2PasswordRequestForm
 
-def save_config(config):
-    os.makedirs("data", exist_ok=True)
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(config, f)
+# --- AUTH ENDPOINTS ---
+@app.post("/api/auth/login", response_model=Token)
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+    user = authenticate_user(form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username, "role": user.role}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
 
-# Endpoints
+# --- SECURED ENDPOINTS ---
+
+@app.post("/api/chat")
+async def chat_with_agent(req: ChatRequest, current_user: User = Depends(get_current_user)):
+    """Orchestrates machine-specific reasoning with AI caching and advanced orchestration."""
+    # 1. Check AI Cache (Phase 4)
+    # Using a deterministic hash of the message content
+    last_msg = req.messages[-1]["content"] if req.messages else ""
+    cache_key = f"ai_cache:{req.machineId}:{hash(last_msg)}"
+    cached_response = await r.get(cache_key)
+    if cached_response:
+        try:
+            return {**json.loads(cached_response), "cached": True}
+        except:
+            return {"response": cached_response, "cached": True}
+
+    # 2. Advanced Real-time Inference
+    user_msg = req.messages[-1]["content"]
+    context_prefix = f"Analyzing Asset: {req.machineName} ({req.machineId}). Current State: {json.dumps(req.equipmentData)}. " if req.machineId != "GLOBAL" and req.equipmentData else ""
+    
+    try:
+        result = agent.get_orchestrator_response(query=context_prefix + user_msg, machine_id=req.machineId)
+        response_data = {**result, "machineId": req.machineId}
+        
+        # 3. Save to Cache
+        await r.setex(cache_key, 3600, json.dumps(response_data)) # Cache for 1 hour
+        
+        return {**response_data, "cached": False}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/onboard")
+async def onboard_machine(req: OnboardRequest, current_user: User = Depends(role_required(["ADMIN"]))):
+    """Securely onboard new industrial assets."""
+    # ... logic for onboarding ...
 @app.get("/api/schedule")
 async def get_schedule():
-    """Returns the master maintenance schedule from the Asset Layer."""
-    from src.data.database import get_all_equipment_metadata
-    metadata = get_all_equipment_metadata()
-    schedule = []
-    for eq in metadata:
-        schedule.append({
-            "id": f"TASK-{eq['id']}",
-            "machineId": eq["id"],
-            "machineName": eq["name"],
-            "task": "Periodic Calibration & Inspection",
-            "date": eq.get("next_scheduled_date", "2024-12-31"),
-            "status": "pending",
-            "priority": "medium",
-            "assignedTo": "Rajan Kumar"
-        })
-    return schedule
+    """Returns the master maintenance schedule from the Maintenance Layer."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT t.*, e.name as machine_name 
+        FROM maintenance_tasks t
+        JOIN equipment e ON t.machine_id = e.id
+        ORDER BY t.due_date ASC
+    """)
+    tasks = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return tasks
+
+@app.post("/api/schedule/{task_id}")
+async def update_task_status(task_id: int, update: TaskUpdate, current_user: Optional[User] = Depends(get_current_user)):
+    """Updates a maintenance task and broadcasts the change in real-time."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    completed_at = None
+    if update.status == "completed":
+        completed_at = datetime.now().isoformat()
+    
+    operator = update.operator or (current_user.username if current_user else "System")
+    
+    cursor.execute("""
+        UPDATE maintenance_tasks 
+        SET status = ?, notes = ?, assigned_to = ?, completed_at = ?
+        WHERE id = ?
+    """, (update.status, update.notes, operator, completed_at, task_id))
+    
+    if cursor.rowcount == 0:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Task not found")
+        
+    conn.commit()
+    
+    # Fetch updated task for broadcast
+    cursor.execute("""
+        SELECT t.*, e.name as machine_name 
+        FROM maintenance_tasks t
+        JOIN equipment e ON t.machine_id = e.id
+        WHERE t.id = ?
+    """, (task_id,))
+    updated_task = dict(cursor.fetchone())
+    conn.close()
+    
+    # Broadcast via Redis
+    r_broadcast = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+    await r_broadcast.publish(SCHEDULE_CHANNEL, json.dumps(updated_task))
+    await r_broadcast.aclose()
+    
+    return updated_task
+
+@app.websocket("/ws/schedule")
+async def schedule_websocket(websocket: WebSocket):
+    await websocket.accept()
+    r_async = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+    pubsub = r_async.pubsub()
+    await pubsub.subscribe(SCHEDULE_CHANNEL)
+    
+    try:
+        async for message in pubsub.listen():
+            if message["type"] == "message":
+                await websocket.send_text(message["data"])
+    except WebSocketDisconnect:
+        await pubsub.unsubscribe(SCHEDULE_CHANNEL)
+    except Exception as e:
+        print(f"Schedule WS Error: {e}")
+    finally:
+        await r_async.aclose()
 
 @app.get("/api/machines/{machine_id}/parameters")
 async def get_machine_params(machine_id: str):
@@ -274,21 +384,31 @@ async def get_machine_telemetry(equipment_id: str, minutes: int = 60):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.websocket("/api/telemetry/ws/{equipment_id}")
+@app.websocket("/ws/telemetry/{equipment_id}")
 async def telemetry_websocket(websocket: WebSocket, equipment_id: str):
     await websocket.accept()
+    r_async = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+    pubsub = r_async.pubsub()
+    await pubsub.subscribe(REDIS_CHANNEL)
+
     try:
-        while True:
-            conn = sqlite3.connect(DB_PATH)
-            cursor = conn.cursor()
-            cursor.execute("SELECT timestamp, temperature, vibration FROM sensor_readings WHERE equipment_id = ? ORDER BY timestamp DESC LIMIT 1", (equipment_id,))
-            row = cursor.fetchone()
-            conn.close()
-            if row:
-                await websocket.send_json({"time": row[0], "temperature": row[1], "vibration": row[2]})
-            await asyncio.sleep(2)
+        async for message in pubsub.listen():
+            if message["type"] == "message":
+                data = json.loads(message["data"])
+                # Only send if it matches the equipment_id requested
+                if data.get("equipment_id") == equipment_id:
+                    await websocket.send_json({
+                        "time": data.get("timestamp", time.time()),
+                        "temperature": data.get("temperature", 0),
+                        "vibration": data.get("vibration", 0)
+                    })
     except WebSocketDisconnect:
-        pass
+        await pubsub.unsubscribe(REDIS_CHANNEL)
+    except Exception as e:
+        print(f"WS Error: {e}")
+    finally:
+        await r_async.aclose()
+
 
 @app.get("/api/history/{equipment_id}")
 async def get_machine_history(equipment_id: str):
@@ -300,16 +420,6 @@ async def get_machine_history(equipment_id: str):
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return rows
-
-@app.post("/api/chat")
-async def chat_with_agent(request: ChatRequest):
-    user_msg = request.messages[-1]["content"]
-    context_prefix = f"Analyzing Asset: {request.machineName} ({request.machineId}). Current State: {json.dumps(request.equipmentData)}. " if request.machineId != "GLOBAL" and request.equipmentData else ""
-    try:
-        result = agent.get_orchestrator_response(query=context_prefix + user_msg, machine_id=request.machineId)
-        return {**result, "machineId": request.machineId}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/chat/voice")
 async def chat_voice(file: UploadFile = File(...), machineId: str = Form("GLOBAL")):

@@ -102,6 +102,23 @@ def init_db():
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+
+    # 5. Maintenance Schedule: Task management
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS maintenance_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            machine_id TEXT NOT NULL,
+            task_name TEXT NOT NULL,
+            task_type TEXT DEFAULT 'routine', -- routine, repair, inspection
+            due_date TEXT,
+            status TEXT DEFAULT 'pending', -- pending, in_progress, completed, overdue
+            assigned_to TEXT,
+            completed_at TEXT,
+            notes TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(machine_id) REFERENCES equipment(id)
+        )
+    ''')
     
     conn.commit()
     conn.close()
@@ -110,6 +127,10 @@ def init_db():
     seed_initial_data()
     
     print(f"--- [DATABASE UPDATED] Schema V2 Live at {DB_PATH} ---")
+
+from datetime import datetime, timedelta
+
+# ... existing imports ...
 
 def seed_initial_data():
     """Populates the database with initial machines and parameters if empty."""
@@ -135,6 +156,30 @@ def seed_initial_data():
                 add_parameter(eq_id, "spindle_load", "Spindle Load", "%", n_min=0, n_max=70, w_th=85, c_th=100)
             elif eq_id == "HYD005":
                 add_parameter(eq_id, "oil_temp", "Oil Temperature", "°C", n_min=30, n_max=60, w_th=75, c_th=85)
+        
+        seed_maintenance_tasks()
+
+def seed_maintenance_tasks():
+    """Initializes a few maintenance tasks for demonstration."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM maintenance_tasks")
+    if cursor.fetchone()[0] == 0:
+        tasks = [
+            ("CNC001", "Lubricate Spindle Bearings", "routine", 2, "pending", "Operator A"),
+            ("CONV01", "Belt Tension Calibration", "inspection", 5, "in_progress", "Operator B"),
+            ("HYD005", "Seal Integrity Verification", "repair", -1, "overdue", "Admin"),
+            ("EXT002", "Sensor Node Battery Swap", "routine", 10, "pending", "Operator A")
+        ]
+        for eq_id, name, t_type, days, status, assigned in tasks:
+            due = (datetime.now() + timedelta(days=days)).date().isoformat()
+            cursor.execute("""
+                INSERT INTO maintenance_tasks (machine_id, task_name, task_type, due_date, status, assigned_to)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (eq_id, name, t_type, due, status, assigned))
+    conn.commit()
+    conn.close()
+    print("--- [SEEDING] Maintenance Tasks Online ---")
 
 def add_equipment(eq_id, name, line, protocol, agent_id=None):
     """

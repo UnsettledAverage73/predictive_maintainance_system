@@ -17,6 +17,9 @@ This project implements a high-performance, Generative AI Agent for Predictive M
    GROQ_API_KEY=your_key
    PINECONE_API_KEY=your_key
    SARVAM_API_KEY=your_key
+   TWILIO_ACCOUNT_SID=your_sid
+   TWILIO_AUTH_TOKEN=your_token
+   TWILIO_WHATSAPP_FROM=whatsapp:+14155238886
    ```
 2. **Launch Sovereign Stack:**
    ```bash
@@ -33,6 +36,8 @@ This project implements a high-performance, Generative AI Agent for Predictive M
    - Simulator: `uv run python src/data/iot_simulator.py`
    - Ingestor: `uv run python src/data/iot_ingestor.py`
    - Dashboard: `uv run streamlit run src/cli/dashboard.py`
+3. **Enable WhatsApp Escalation:**
+   Set the recipient number from the alerts screen or in `data/config.json` as `whatsapp_number` with country code, for example `+919876543210`. Critical alerts are sent automatically when the ingestor logs a critical event.
 
 ## 🏗️ System Architecture (Mermaid)
 

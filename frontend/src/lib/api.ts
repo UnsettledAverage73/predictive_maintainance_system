@@ -27,6 +27,7 @@ export const api = {
   getMachineHistory: (id: string) => fetchApi(`/api/history/${id}`),
   getAlerts: () => fetchApi("/api/alerts"),
   getSchedule: () => fetchApi("/api/schedule"),
+  updateTask: (id: number, payload: any) => fetchApi(`/api/schedule/${id}`, { method: "POST", body: JSON.stringify(payload) }),
   chat: (payload: any) => fetchApi("/api/chat", { method: "POST", body: JSON.stringify(payload) }),
   chatVoice: async (formData: FormData) => {
     const response = await fetch(`${API_BASE_URL}/api/chat/voice`, {
