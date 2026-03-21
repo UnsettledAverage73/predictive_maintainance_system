@@ -105,8 +105,13 @@ class MaintenanceAgent:
             params = database.get_machine_parameters(machine_id)
             param_details = []
             for p in params:
-                if p['isUsedForPrediction']:
-                    detail = f"- {p['displayName']} ({p['parameterKey']}): unit={p['unit']}, normal={p['normalMin']}-{p['normalMax']}, warning={p['warningThreshold']}, critical={p['criticalThreshold']}. {p['description'] or ''}"
+                if p.get('is_used_for_prediction'):
+                    detail = (
+                        f"- {p.get('display_name')} ({p.get('parameter_key')}): "
+                        f"unit={p.get('unit')}, normal={p.get('normal_min')}-{p.get('normal_max')}, "
+                        f"warning={p.get('warning_threshold')}, critical={p.get('critical_threshold')}. "
+                        f"{p.get('description') or ''}"
+                    )
                     param_details.append(detail)
             if param_details:
                 param_context_str = "\nDynamic Parameter Registry:\n" + "\n".join(param_details)
@@ -343,17 +348,20 @@ class MaintenanceAgent:
             "Content-Type": "application/json"
         }
         payload = {
-            "input": text,
+            "text": text,
             "model": "bulbul:v1",
             "speaker": "meera",
-            "target_language_code": language_code
+            "target_language_code": language_code,
+            "speech_sample_rate": 22050,
+            "enable_preprocessing": True
         }
         
         try:
             response = requests.post(url, headers=headers, json=payload)
             response.raise_for_status()
-            # Sarvam returns JSON with "audio" field containing base64 string
-            return response.json().get("audio", "")
+            # Sarvam returns JSON with "audios" field containing a list of base64 strings
+            audios = response.json().get("audios", [])
+            return audios[0] if audios else ""
         except Exception as e:
             print(f"TTS Error: {e}")
             return ""
@@ -366,19 +374,24 @@ class MaintenanceAgent:
         if not self.sarvam_key:
             return "Sarvam API Key not configured."
             
-        url = "https://api.sarvam.ai/document-intelligence/v1"
+        # The correct direct vision endpoint
+        url = "https://api.sarvam.ai/v1/vision/document"
         headers = {"api-subscription-key": self.sarvam_key}
-        files = {"file": ("image.jpg", image_bytes, "image/jpeg")}
+        files = {"image": ("image.jpg", image_bytes, "image/jpeg")}
+        data = {"extract_structured": "false"}
         
         try:
-            response = requests.post(url, headers=headers, files=files)
+            response = requests.post(url, headers=headers, files=files, data=data)
             response.raise_for_status()
-            # Assuming it returns markdown or text in the response
-            return response.json().get("content", "No content extracted.")
+            # Sarvam Vision returns "text" field
+            return response.json().get("text", "No content extracted.")
         except Exception as e:
             # Fallback to local OCR if Sarvam fails
-            print(f"Sarvam Vision Error: {e}. Falling back to local OCR.")
-            return ocr_engine.extract_text(image_bytes)
+            print(f"Sarvam Vision Error: {e}. Attempting local OCR fallback...")
+            try:
+                return ocr_engine.extract_text(image_bytes)
+            except Exception as ocr_err:
+                return f"Vision Error: {str(e)}. OCR Fallback failed: {str(ocr_err)}"
 
     def _get_sarvam_inference(self, system_prompt, user_content) -> str:
         if not self.sarvam_client or not self.sarvam_key:
