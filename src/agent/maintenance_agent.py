@@ -81,15 +81,15 @@ class MaintenanceAgent:
         machine_metadata_str = ""
         param_context_str = ""
         
+        import sqlite3
+        conn = sqlite3.connect("data/factory_ops.db")
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
         if machine_id != "GLOBAL":
-            # Fetch metadata from 'equipment' table
-            import sqlite3
-            conn = sqlite3.connect("data/factory_ops.db")
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
+            # Fetch metadata for specific machine
             cursor.execute("SELECT * FROM equipment WHERE id = ?", (machine_id,))
             m_row = cursor.fetchone()
-            conn.close()
             
             if m_row:
                 machine_metadata_str = f"""
@@ -110,6 +110,24 @@ class MaintenanceAgent:
                     param_details.append(detail)
             if param_details:
                 param_context_str = "\nDynamic Parameter Registry:\n" + "\n".join(param_details)
+        else:
+            # GLOBAL MODE: Fetch all machines to provide bird's eye view
+            cursor.execute("SELECT id, name, status, production_line FROM equipment")
+            all_machines = cursor.fetchall()
+            m_list = [f"- {m['name']} (ID: {m['id']}) on {m['production_line']}. Status: {m['status']}" for m in all_machines]
+            machine_metadata_str = "PLANT ASSET SUMMARY:\n" + "\n".join(m_list)
+            
+            # If user mentioned a specific MCH-ID in query, fetch its parameters too
+            import re
+            mch_match = re.search(r'(MCH-[A-Z0-9]+)', query)
+            if mch_match:
+                target_mch = mch_match.group(1)
+                params = database.get_machine_parameters(target_mch)
+                if params:
+                    param_details = [f"- {p['displayName']} ({p['parameterKey']}) for {target_mch}" for p in params]
+                    param_context_str = f"\nParameters for {target_mch}:\n" + "\n".join(param_details)
+
+        conn.close()
 
         # 2. Fetch Context from Vector DB (Pinecone)
         vector_context = self.query_similar_issues(query, top_k=2)
