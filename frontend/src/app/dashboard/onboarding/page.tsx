@@ -9,27 +9,55 @@ import { api } from "@/lib/api";
 export default function OnboardingPage() {
   const [step, setStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isTestingConnection, setIsTestingConnection] = useState(false);
+  const [testResult, setTestResult] = useState<{status: 'success' | 'error', message: string} | null>(null);
   const totalSteps = 3;
 
   const [formData, setFormData] = useState({
     protocol: "MQTT",
-    assetName: "Robotic Arm Delta",
-    productionLine: "Line 2 - Assembly",
+    assetName: "",
+    machineType: "CNC Machine",
+    productionLine: "Line 1 - Extrusion",
     operator: "Sarah Connor (Lead Eng)",
     brokerUrl: "mqtt://10.0.1.55",
     port: "1883",
-    topic: "telemetry/arm-delta/#"
+    topic: "telemetry/asset/#"
   });
+
+  const handleTestConnection = async () => {
+    setIsTestingConnection(true);
+    setTestResult(null);
+    try {
+      const res = await api.testConnection({
+        protocol: formData.protocol,
+        url: formData.brokerUrl,
+        port: formData.port
+      });
+      setTestResult({ status: 'success', message: res.message });
+    } catch (error: any) {
+      setTestResult({ status: 'error', message: error.message || "Connection failed" });
+    } finally {
+      setIsTestingConnection(false);
+    }
+  };
 
   const handleNext = async () => {
     if (step === totalSteps) {
+      if (!testResult || testResult.status !== 'success') {
+        alert("Please test and confirm connection before spawning agent.");
+        return;
+      }
       setIsSubmitting(true);
       try {
         await api.onboardMachine({
           id: "MCH-" + Math.random().toString(36).substr(2, 4).toUpperCase(),
           name: formData.assetName,
           productionLine: formData.productionLine,
-          protocol: formData.protocol
+          protocol: formData.protocol,
+          machineType: formData.machineType,
+          brokerUrl: formData.brokerUrl,
+          port: formData.port,
+          topic: formData.topic
         });
         setStep(s => s + 1);
       } catch (error) {
@@ -43,7 +71,10 @@ export default function OnboardingPage() {
     }
   };
 
-  const handlePrev = () => setStep(s => Math.max(1, s - 1));
+  const handlePrev = () => {
+    setStep(s => Math.max(1, s - 1));
+    setTestResult(null);
+  };
 
   if (step > totalSteps) {
     return (
@@ -75,81 +106,35 @@ export default function OnboardingPage() {
         <p className="text-[var(--color-muted)] text-sm">Connect a new asset and spawn its dedicated AI guardian agent.</p>
       </div>
 
-      <StepWizard currentStep={step} totalSteps={totalSteps} labels={["Protocol", "Connection", "Configuration"]} />
+      <StepWizard currentStep={step} totalSteps={totalSteps} labels={["Machine Info", "Protocol", "Connection"]} />
 
-      <div className="w-full glass-panel rounded-2xl p-8 mb-8 mt-4 min-h-[350px]">
+      <div className="w-full glass-panel rounded-2xl p-8 mb-8 mt-4 min-h-[400px]">
         {step === 1 && (
-          <div className="animate-in slide-in-from-right-4 duration-300">
-            <h3 className="text-lg font-bold mb-6">Select Telemetry Protocol</h3>
-            <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-              {["OPC-UA", "MQTT", "Modbus", "REST DB", "CSV Upload"].map((p, i) => (
-                <div key={p} 
-                  onClick={() => setFormData({...formData, protocol: p})}
-                  className={cn(
-                  "p-6 rounded-xl border-2 flex flex-col items-center justify-center text-center gap-3 cursor-pointer transition-all",
-                  formData.protocol === p ? "border-[var(--color-primary)] bg-[var(--color-primary)]/5 shadow-[0_0_15px_var(--color-primary)]/10" : "border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-muted)]"
-                )}>
-                  <Plug className={cn("w-8 h-8", formData.protocol === p ? "text-[var(--color-primary)]" : "text-[var(--color-muted)]")} />
-                  <span className="font-bold text-sm tracking-wide">{p}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {step === 2 && (
           <div className="animate-in slide-in-from-right-4 duration-300 flex flex-col gap-6">
-            <h3 className="text-lg font-bold">Configure Connection ({formData.protocol})</h3>
-            <div className="grid grid-cols-2 gap-6">
-              <div className="flex flex-col gap-2">
-                <label className="text-xs uppercase tracking-widest text-[var(--color-muted)] font-bold">Broker URL</label>
-                <input 
-                  type="text" 
-                  value={formData.brokerUrl}
-                  onChange={(e) => setFormData({...formData, brokerUrl: e.target.value})}
-                  placeholder="mqtt://broker.hivemq.com" 
-                  className="bg-[var(--color-background)] border border-[var(--color-border)] p-3 rounded-lg font-mono text-sm focus:border-[var(--color-primary)] outline-none" 
-                />
-              </div>
-              <div className="flex flex-col gap-2">
-                <label className="text-xs uppercase tracking-widest text-[var(--color-muted)] font-bold">Port</label>
-                <input 
-                  type="text" 
-                  value={formData.port}
-                  onChange={(e) => setFormData({...formData, port: e.target.value})}
-                  placeholder="1883" 
-                  className="bg-[var(--color-background)] border border-[var(--color-border)] p-3 rounded-lg font-mono text-sm focus:border-[var(--color-primary)] outline-none" 
-                />
-              </div>
-              <div className="flex flex-col gap-2 col-span-2">
-                <label className="text-xs uppercase tracking-widest text-[var(--color-muted)] font-bold">Topic Subscription</label>
-                <input 
-                  type="text" 
-                  value={formData.topic}
-                  onChange={(e) => setFormData({...formData, topic: e.target.value})}
-                  placeholder="plant/line2/machine/#" 
-                  className="bg-[var(--color-background)] border border-[var(--color-border)] p-3 rounded-lg font-mono text-sm focus:border-[var(--color-primary)] outline-none" 
-                />
-              </div>
-            </div>
-            <button className="self-start px-4 py-2 border border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-primary)]/10 rounded-lg text-sm font-bold hover:bg-[var(--color-primary)] hover:text-[#0D1117] transition-colors flex items-center gap-2">
-              <Plug className="w-4 h-4" /> Test Connection
-            </button>
-          </div>
-        )}
-
-        {step === 3 && (
-          <div className="animate-in slide-in-from-right-4 duration-300 flex flex-col gap-6">
-            <h3 className="text-lg font-bold">Machine Assignment</h3>
-            <div className="flex flex-col gap-4">
+            <h3 className="text-lg font-bold mb-2">Machine Identification</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="flex flex-col gap-2">
                 <label className="text-xs uppercase tracking-widest text-[var(--color-muted)] font-bold">Machine Asset Name</label>
                 <input 
                   type="text" 
                   value={formData.assetName}
                   onChange={(e) => setFormData({...formData, assetName: e.target.value})}
+                  placeholder="e.g. CNC Lathe Alpha"
                   className="bg-[var(--color-background)] border border-[var(--color-border)] p-3 rounded-lg text-sm focus:border-[var(--color-primary)] outline-none" 
                 />
+              </div>
+              <div className="flex flex-col gap-2">
+                <label className="text-xs uppercase tracking-widest text-[var(--color-muted)] font-bold">Machine Type</label>
+                <select 
+                  value={formData.machineType}
+                  onChange={(e) => setFormData({...formData, machineType: e.target.value})}
+                  className="bg-[var(--color-background)] border border-[var(--color-border)] p-3 rounded-lg text-sm focus:border-[var(--color-primary)] outline-none">
+                  <option>CNC Machine</option>
+                  <option>Robotic Arm</option>
+                  <option>Hydraulic Press</option>
+                  <option>Injection Molder</option>
+                  <option>Conveyor System</option>
+                </select>
               </div>
               <div className="flex flex-col gap-2">
                 <label className="text-xs uppercase tracking-widest text-[var(--color-muted)] font-bold">Production Line</label>
@@ -173,6 +158,92 @@ export default function OnboardingPage() {
                   <option>Alex J. (Technician)</option>
                 </select>
               </div>
+            </div>
+          </div>
+        )}
+
+        {step === 2 && (
+          <div className="animate-in slide-in-from-right-4 duration-300">
+            <h3 className="text-lg font-bold mb-6">Select Telemetry Protocol</h3>
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+              {["OPC-UA", "MQTT", "Modbus", "REST DB", "CSV Upload"].map((p, i) => (
+                <div key={p} 
+                  onClick={() => setFormData({...formData, protocol: p})}
+                  className={cn(
+                  "p-6 rounded-xl border-2 flex flex-col items-center justify-center text-center gap-3 cursor-pointer transition-all",
+                  formData.protocol === p ? "border-[var(--color-primary)] bg-[var(--color-primary)]/5 shadow-[0_0_15px_var(--color-primary)]/10" : "border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-muted)]"
+                )}>
+                  <Plug className={cn("w-8 h-8", formData.protocol === p ? "text-[var(--color-primary)]" : "text-[var(--color-muted)]")} />
+                  <span className="font-bold text-sm tracking-wide">{p}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {step === 3 && (
+          <div className="animate-in slide-in-from-right-4 duration-300 flex flex-col gap-6">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold">Connection Configuration ({formData.protocol})</h3>
+              {testResult && (
+                <div className={cn(
+                  "px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider flex items-center gap-2",
+                  testResult.status === 'success' ? "bg-[var(--color-success)]/20 text-[var(--color-success)] border border-[var(--color-success)]/30" : "bg-[var(--color-destructive)]/20 text-[var(--color-destructive)] border border-[var(--color-destructive)]/30"
+                )}>
+                  {testResult.status === 'success' ? <CheckCircle2 className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
+                  {testResult.message}
+                </div>
+              )}
+            </div>
+            
+            <div className="grid grid-cols-2 gap-6">
+              <div className="flex flex-col gap-2">
+                <label className="text-xs uppercase tracking-widest text-[var(--color-muted)] font-bold">Broker/Endpoint URL</label>
+                <input 
+                  type="text" 
+                  value={formData.brokerUrl}
+                  onChange={(e) => setFormData({...formData, brokerUrl: e.target.value})}
+                  placeholder="e.g. mqtt://10.0.1.55" 
+                  className="bg-[var(--color-background)] border border-[var(--color-border)] p-3 rounded-lg font-mono text-sm focus:border-[var(--color-primary)] outline-none" 
+                />
+              </div>
+              <div className="flex flex-col gap-2">
+                <label className="text-xs uppercase tracking-widest text-[var(--color-muted)] font-bold">Port</label>
+                <input 
+                  type="text" 
+                  value={formData.port}
+                  onChange={(e) => setFormData({...formData, port: e.target.value})}
+                  placeholder="1883" 
+                  className="bg-[var(--color-background)] border border-[var(--color-border)] p-3 rounded-lg font-mono text-sm focus:border-[var(--color-primary)] outline-none" 
+                />
+              </div>
+              <div className="flex flex-col gap-2 col-span-2">
+                <label className="text-xs uppercase tracking-widest text-[var(--color-muted)] font-bold">Topic / Data Path</label>
+                <input 
+                  type="text" 
+                  value={formData.topic}
+                  onChange={(e) => setFormData({...formData, topic: e.target.value})}
+                  placeholder="plant/line1/machine-alpha/#" 
+                  className="bg-[var(--color-background)] border border-[var(--color-border)] p-3 rounded-lg font-mono text-sm focus:border-[var(--color-primary)] outline-none" 
+                />
+              </div>
+            </div>
+            
+            <div className="p-4 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl">
+              <p className="text-xs text-[var(--color-muted)] mb-4">
+                Verify that the dashboard can reach the machine's telemetry stream before finalizing the agent deployment.
+              </p>
+              <button 
+                onClick={handleTestConnection}
+                disabled={isTestingConnection}
+                className="px-6 py-2.5 bg-[var(--color-primary)]/10 border border-[var(--color-primary)] text-[var(--color-primary)] rounded-lg text-sm font-bold hover:bg-[var(--color-primary)] hover:text-[#0D1117] transition-all flex items-center gap-2 disabled:opacity-50"
+              >
+                {isTestingConnection ? (
+                  <><span className="w-4 h-4 border-2 border-[var(--color-primary)] border-t-transparent rounded-full animate-spin" /> Probing...</>
+                ) : (
+                  <><Plug className="w-4 h-4" /> Test Connection</>
+                )}
+              </button>
             </div>
           </div>
         )}

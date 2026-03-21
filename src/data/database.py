@@ -10,7 +10,7 @@ def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    # 1. Telemetry Layer: High-frequency raw sensor data
+    # 1. Telemetry Layer: High-frequency raw sensor data (Legacy)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS sensor_readings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -18,6 +18,45 @@ def init_db():
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
             temperature REAL,
             vibration REAL
+        )
+    ''')
+
+    # 1.1 Universal Telemetry Layer: Parameter-aware time-series (New)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS telemetry_readings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            machine_id TEXT NOT NULL,
+            parameter_key TEXT NOT NULL,
+            value REAL,
+            string_value TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # 1.2 Parameter Registry: Defines what a machine can measure
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS machine_parameters (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            machine_id TEXT NOT NULL,
+            parameter_key TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            category TEXT DEFAULT 'custom',
+            data_type TEXT DEFAULT 'float',
+            unit TEXT,
+            normal_min REAL,
+            normal_max REAL,
+            warning_threshold REAL,
+            critical_threshold REAL,
+            direction TEXT DEFAULT 'above',
+            source_field TEXT,
+            is_visible BOOLEAN DEFAULT 1,
+            is_used_for_prediction BOOLEAN DEFAULT 1,
+            aggregation TEXT DEFAULT 'last',
+            display_order INTEGER DEFAULT 0,
+            description TEXT,
+            alert_enabled BOOLEAN DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(machine_id, parameter_key)
         )
     ''')
     
@@ -151,13 +190,52 @@ def log_manual_repair(eq_id, operator, action, parts="None", alert_id=None):
     finally:
         conn.close()
 
-def log_sensor_reading(eq_id, temp, vib):
-    """Logs raw telemetry data into the local persistence layer."""
+def add_parameter(machine_id, key, name, unit=None, **kwargs):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cols = ['machine_id', 'parameter_key', 'display_name', 'unit'] + list(kwargs.keys())
+    vals = [machine_id, key, name, unit] + list(kwargs.values())
+    placeholders = ', '.join(['?'] * len(cols))
+    col_names = ', '.join(cols)
+    try:
+        cursor.execute(f"INSERT OR REPLACE INTO machine_parameters ({col_names}) VALUES ({placeholders})", vals)
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"Error adding parameter: {e}")
+        return False
+    finally:
+        conn.close()
+
+def get_machine_parameters(machine_id):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM machine_parameters WHERE machine_id = ? ORDER BY display_order ASC", (machine_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def seed_common_parameters(machine_id):
+    """Seeds the 5 universal parameters for a new machine."""
+    commons = [
+        ('temperature', 'Temperature', '°C', 20, 80, 100, 120, 'above'),
+        ('vibration_rms', 'Vibration RMS', 'mm/s', 0, 2.5, 4.5, 6.0, 'above'),
+        ('pressure', 'Pressure', 'bar', 1, 10, 12, 15, 'above'),
+        ('rpm', 'RPM', 'RPM', 0, 3000, 3500, 4000, 'above'),
+        ('current_draw', 'Current Draw', 'A', 0, 50, 60, 75, 'above')
+    ]
+    for key, name, unit, n_min, n_max, w_th, c_th, direction in commons:
+        add_parameter(machine_id, key, name, unit, 
+                      category='common', normal_min=n_min, normal_max=n_max, 
+                      warning_threshold=w_th, critical_threshold=c_th, direction=direction)
+
+def log_telemetry_point(machine_id, key, value, string_value=None):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO sensor_readings (equipment_id, timestamp, temperature, vibration) VALUES (?, ?, ?, ?)",
-        (eq_id, datetime.now().isoformat(), temp, vib)
+        "INSERT INTO telemetry_readings (machine_id, parameter_key, value, string_value, timestamp) VALUES (?, ?, ?, ?, ?)",
+        (machine_id, key, value, string_value, datetime.now().isoformat())
     )
     conn.commit()
     conn.close()

@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { AlertTriangle, Filter, CheckCircle2, AlertCircle, Info, ArrowUpRight, ChevronLeft } from "lucide-react";
+import { AlertTriangle, Filter, CheckCircle2, AlertCircle, Info, ArrowUpRight, ChevronLeft, Settings, Phone, Save, X } from "lucide-react";
 import { Alert } from "@/types";
 import { cn } from "@/lib/utils";
 import { useDrag } from '@use-gesture/react';
@@ -69,16 +69,18 @@ export default function AlertsPage() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [selectedAlertId, setSelectedAlertId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [whatsappNumber, setWhatsappNumber] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     const fetchAlerts = async () => {
       try {
         const rawAlerts = await api.getAlerts();
-        // Map backend ai_alerts to frontend Alert type
         const mappedAlerts: Alert[] = rawAlerts.map((a: any) => ({
           id: a.id.toString(),
           machineId: a.equipment_id,
-          machineName: a.equipment_id, // We'd need to fetch names separately if wanted
+          machineName: a.equipment_id,
           severity: a.severity.toLowerCase() as any,
           title: a.reason,
           description: "Sensor breach detected by IoT Ingestor.",
@@ -94,10 +96,32 @@ export default function AlertsPage() {
       }
     };
 
+    const fetchSettings = async () => {
+      try {
+        const settings = await api.getWhatsAppNumber();
+        setWhatsappNumber(settings.whatsapp_number || "");
+      } catch (error) {
+        console.error("Failed to fetch settings:", error);
+      }
+    };
+
     fetchAlerts();
+    fetchSettings();
     const interval = setInterval(fetchAlerts, 5000);
     return () => clearInterval(interval);
   }, []);
+
+  const handleUpdateNumber = async () => {
+    setIsSaving(true);
+    try {
+      await api.updateWhatsAppNumber(whatsappNumber);
+      setIsSettingsOpen(false);
+    } catch (error) {
+      console.error("Failed to update number:", error);
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   const handleAcknowledge = (id: string) => {
     // In a real app, we'd call an API to acknowledge the alert
@@ -118,9 +142,17 @@ export default function AlertsPage() {
           <h1 className="text-2xl font-bold">Alert & Notification Center</h1>
           <p className="text-[var(--color-muted)] text-sm">Triage and manage machine anomalies</p>
         </div>
-        <button className="hidden md:flex items-center gap-2 bg-[var(--color-surface)] px-4 py-2 rounded-lg border border-[var(--color-border)] text-sm font-medium hover:bg-[var(--color-border)]/50 transition-colors">
-          <Filter className="w-4 h-4" /> Filter
-        </button>
+        <div className="flex gap-2">
+          <button 
+            onClick={() => setIsSettingsOpen(true)}
+            className="flex items-center gap-2 bg-[var(--color-surface)] px-4 py-2 rounded-lg border border-[var(--color-border)] text-sm font-medium hover:bg-[var(--color-border)]/50 transition-colors"
+          >
+            <Settings className="w-4 h-4" /> Notification Settings
+          </button>
+          <button className="hidden md:flex items-center gap-2 bg-[var(--color-surface)] px-4 py-2 rounded-lg border border-[var(--color-border)] text-sm font-medium hover:bg-[var(--color-border)]/50 transition-colors">
+            <Filter className="w-4 h-4" /> Filter
+          </button>
+        </div>
       </div>
 
       {alerts.length === 0 ? (
@@ -220,6 +252,68 @@ export default function AlertsPage() {
         </div>
         )}
       </div>
+      )}
+
+      {/* Settings Modal */}
+      {isSettingsOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-6 border-b border-[var(--color-border)] flex items-center justify-between">
+              <h3 className="text-xl font-bold flex items-center gap-2">
+                <Settings className="w-5 h-5 text-[var(--color-primary)]" /> Notification Settings
+              </h3>
+              <button 
+                onClick={() => setIsSettingsOpen(false)}
+                className="text-[var(--color-muted)] hover:text-white transition-colors"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            
+            <div className="p-6">
+              <div className="mb-6">
+                <label className="block text-xs font-bold uppercase tracking-widest text-[var(--color-muted)] mb-2">
+                  WhatsApp Alert Number
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-[var(--color-muted)]">
+                    <Phone className="w-4 h-4" />
+                  </div>
+                  <input 
+                    type="text" 
+                    value={whatsappNumber}
+                    onChange={(e) => setWhatsappNumber(e.target.value)}
+                    placeholder="+919876543210"
+                    className="w-full bg-[var(--color-background)] border border-[var(--color-border)] rounded-xl py-3 pl-10 pr-4 text-sm focus:border-[var(--color-primary)] outline-none transition-colors"
+                  />
+                </div>
+                <p className="mt-2 text-[10px] text-[var(--color-muted)] leading-relaxed">
+                  Enter your full phone number with country code. All critical machine anomalies will be escalated to this WhatsApp account.
+                </p>
+              </div>
+
+              <div className="flex gap-3">
+                <button 
+                  onClick={handleUpdateNumber}
+                  disabled={isSaving}
+                  className="flex-1 bg-[var(--color-primary)] text-[#0D1117] font-bold py-3 rounded-xl hover:brightness-110 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isSaving ? (
+                    <span className="w-5 h-5 border-2 border-[#0D1117]/30 border-t-[#0D1117] rounded-full animate-spin" />
+                  ) : (
+                    <><Save className="w-4 h-4" /> Save Configuration</>
+                  )}
+                </button>
+                <button 
+                  onClick={() => setIsSettingsOpen(false)}
+                  className="px-6 bg-[var(--color-background)] border border-[var(--color-border)] rounded-xl text-sm font-medium hover:bg-[var(--color-border)]/50 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

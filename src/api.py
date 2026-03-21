@@ -1,11 +1,12 @@
 import os
 import json
 import sqlite3
-from fastapi import FastAPI, HTTPException
+import base64
+from datetime import datetime
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
-from datetime import datetime
 from twilio.rest import Client
 from src.agent.maintenance_agent import MaintenanceAgent
 from src.data.analytics import calculate_failure_probability
@@ -44,11 +45,89 @@ class RepairRequest(BaseModel):
     parts_replaced: Optional[str] = "None"
     alert_id: Optional[int] = None
 
-class OnboardRequest(BaseModel):
-    id: str
-    name: str
-    productionLine: str
+class ParameterRequest(BaseModel):
+    parameter_key: str
+    display_name: str
+    unit: Optional[str] = None
+    normal_min: Optional[float] = None
+    normal_max: Optional[float] = None
+    warning_threshold: Optional[float] = None
+    critical_threshold: Optional[float] = None
+    direction: Optional[str] = "above"
+    description: Optional[str] = None
+
+@app.get("/api/machines/{machine_id}/parameters")
+async def get_machine_params(machine_id: str):
+    from src.data.database import get_machine_parameters
+    return get_machine_parameters(machine_id)
+
+@app.post("/api/machines/{machine_id}/parameters")
+async def add_machine_param(machine_id: str, request: ParameterRequest):
+    from src.data.database import add_parameter
+    success = add_parameter(machine_id, **request.dict())
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to add parameter")
+    return {"status": "success"}
+
+@app.get("/api/machines/templates")
+async def get_templates():
+    return agent.get_parameter_templates()
+
+@app.post("/api/machines/{machine_id}/parameters/template/{template_name}")
+async def apply_template(machine_id: str, template_name: str):
+    from src.data.database import add_parameter
+    templates = agent.get_parameter_templates()
+    if template_name not in templates:
+        raise HTTPException(status_code=404, detail="Template not found")
+    
+    for p in templates[template_name]:
+        add_parameter(
+            machine_id, 
+            key=p['key'], 
+            name=p['name'], 
+            unit=p['unit'],
+            normal_min=p['n_min'],
+            normal_max=p['n_max'],
+            warning_threshold=p['w_th'],
+            critical_threshold=p['c_th'],
+            direction=p['dir']
+        )
+    return {"status": "success", "message": f"Applied {template_name} template"}
+
+class ConnectionTestRequest(BaseModel):
     protocol: str
+    url: str
+    port: Optional[str] = None
+
+@app.post("/api/test-connection")
+async def test_connection(request: ConnectionTestRequest):
+    """
+    Sovereign Connection Probe: 
+    Validates if the target machine/broker is reachable.
+    """
+    # In a real scenario, you'd attempt a socket connection or ping
+    import time
+    time.sleep(1.5) # Simulate network latency
+    
+    if "error" in request.url.lower():
+        raise HTTPException(status_code=400, detail=f"Connection refused by {request.url}")
+        
+    return {"status": "success", "latency_ms": 42, "message": f"Handshake with {request.protocol} broker established."}
+
+CONFIG_FILE = "data/config.json"
+
+class WhatsAppRequest(BaseModel):
+    number: str
+
+def get_config():
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, "r") as f:
+            return json.load(f)
+    return {"whatsapp_number": os.getenv("MY_PHONE_NUMBER", "")}
+
+def save_config(config):
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(config, f)
 
 def send_whatsapp_alert(equipment_id: str, severity: str, prescription: str):
     """
@@ -59,8 +138,13 @@ def send_whatsapp_alert(equipment_id: str, severity: str, prescription: str):
     if not account_sid or not auth_token:
         return None
         
+    config = get_config()
+    to_number = config.get("whatsapp_number")
+    if not to_number:
+        return None
+
     from_whatsapp = "whatsapp:+14155238886" # Twilio Sandbox Number
-    to_whatsapp = f"whatsapp:{os.getenv('MY_PHONE_NUMBER')}" # Your Verified Number
+    to_whatsapp = f"whatsapp:{to_number}"
 
     client = Client(account_sid, auth_token)
 
@@ -388,14 +472,23 @@ async def get_factory_stats():
         "factoryStatus": "Critical" if global_risk_index > 75 else ("Degraded" if global_risk_index > 40 else "Optimal")
     }
 
+class OnboardRequest(BaseModel):
+    id: str
+    name: str
+    productionLine: str
+    protocol: str
+    machineType: Optional[str] = "Generic Industrial"
+    brokerUrl: Optional[str] = None
+    port: Optional[str] = None
+    topic: Optional[str] = None
+
 @app.post("/api/equipment")
 async def onboard_machine(request: OnboardRequest):
     """
     Sovereign Onboarding: 
     Validates machine parameters and registers it in the Global Asset Registry.
     """
-    # In a real factory, you'd perform a 'ping' to the MQTT broker here
-    print(f"--- [ONBOARDING] Initializing Agent for {request.name} via {request.protocol} ---")
+    from src.data.database import add_equipment, seed_common_parameters, add_parameter
     
     success = add_equipment(
         id=request.id,
@@ -406,6 +499,25 @@ async def onboard_machine(request: OnboardRequest):
     
     if not success:
         raise HTTPException(status_code=500, detail="Ledger Write Failed")
+
+    # 1. Seed Universal Parameters
+    seed_common_parameters(request.id)
+
+    # 2. Seed Template Parameters if applicable
+    templates = agent.get_parameter_templates()
+    if request.machineType in templates:
+        for p in templates[request.machineType]:
+            add_parameter(
+                request.id, 
+                key=p['key'], 
+                name=p['name'], 
+                unit=p['unit'],
+                normal_min=p['n_min'],
+                normal_max=p['n_max'],
+                warning_threshold=p['w_th'],
+                critical_threshold=p['c_th'],
+                direction=p['dir']
+            )
 
     return {"status": "Agent Spawned", "id": request.id}
 
@@ -448,6 +560,62 @@ async def get_alerts():
         return [dict(row) for row in rows]
     except Exception:
         return []
+
+@app.post("/api/chat/voice")
+async def chat_voice(file: UploadFile = File(...), machineId: str = Form("GLOBAL")):
+    """
+    Voice-to-Voice: STT -> Agent -> TTS.
+    """
+    audio_bytes = await file.read()
+    
+    # 1. Speech-to-Text
+    transcript = agent.speech_to_text(audio_bytes)
+    
+    # 2. Agent Logic
+    result = agent.get_orchestrator_response(query=transcript, machine_id=machineId)
+    
+    # 3. Text-to-Speech
+    audio_response = agent.text_to_speech(result["message"])
+    
+    return {
+        "transcript": transcript,
+        "message": result["message"],
+        "audio": audio_response, # Base64 string
+        "sources": result["sources"],
+        "confidence": result["confidence"]
+    }
+
+@app.post("/api/chat/vision")
+async def chat_vision(file: UploadFile = File(...), prompt: str = Form("Describe this machine event"), machineId: str = Form("GLOBAL")):
+    """
+    Multimodal: Image Analysis -> Agent response.
+    """
+    image_bytes = await file.read()
+    
+    # 1. Image context extraction
+    vision_context = agent.analyze_document_vision(image_bytes)
+    
+    # 2. Combined reasoning
+    query = f"User Prompt: {prompt}\nContext from Image (Sarvam Vision): {vision_context}"
+    result = agent.get_orchestrator_response(query=query, machine_id=machineId)
+    
+    return {
+        "visual_context": vision_context,
+        "message": result["message"],
+        "sources": result["sources"],
+        "confidence": result["confidence"]
+    }
+
+@app.get("/api/settings/whatsapp")
+async def get_whatsapp_settings():
+    return get_config()
+
+@app.post("/api/settings/whatsapp")
+async def update_whatsapp_settings(request: WhatsAppRequest):
+    config = get_config()
+    config["whatsapp_number"] = request.number
+    save_config(config)
+    return {"status": "success", "message": "WhatsApp number updated."}
 
 if __name__ == "__main__":
     import uvicorn

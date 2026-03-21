@@ -3,7 +3,7 @@
 import { use, useState, useEffect } from "react";
 import Link from "next/link";
 import dynamic from 'next/dynamic';
-import { ChevronRight, MessageSquare, Plus, FileDown } from "lucide-react";
+import { ChevronRight, MessageSquare, Plus, FileDown, Settings2 } from "lucide-react";
 import { ProtocolBadge } from "@/components/machines/ProtocolBadge";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { RiskBadge } from "@/components/ui/RiskBadge";
@@ -30,6 +30,7 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
   const idStr = resolvedParams.id;
   
   const [machine, setMachine] = useState<Machine | null>(null);
+  const [parameters, setParameters] = useState<any[]>([]);
   const [telemetry, setTelemetry] = useState<TelemetryPoint[]>([]);
   const [logs, setLogs] = useState<MaintenanceTask[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -39,13 +40,15 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [equipment, telemetryData, historyData] = await Promise.all([
+        const [equipment, telemetryData, historyData, paramData] = await Promise.all([
           api.getEquipment().then(list => list.find((m: Machine) => m.id === idStr)),
           api.getMachineTelemetry(idStr),
-          api.getMachineHistory(idStr)
+          api.getMachineHistory(idStr),
+          api.getMachineParameters(idStr)
         ]);
         
         setMachine(equipment);
+        setParameters(paramData || []);
         setTelemetry(telemetryData);
         // Map backend logs to frontend MaintenanceTask type
         setLogs(historyData.map((l: any) => ({
@@ -112,6 +115,12 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
           <p className="text-sm font-mono text-[var(--color-muted)]">ID: {idStr}</p>
         </div>
         <div className="flex gap-2">
+          <Link
+            href={`/dashboard/machines/${idStr}/parameters`}
+            className="bg-[var(--color-surface)] border border-[var(--color-border)] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[var(--color-border)]/50 transition-all flex items-center gap-2"
+          >
+            <Settings2 className="w-4 h-4" /> Manage Parameters
+          </Link>
           <button 
             onClick={handleMitigate}
             disabled={isMitigating}
@@ -149,6 +158,13 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 flex flex-col gap-6">
+          {/* Dynamic Parameter Grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+            {parameters.filter(p => p.is_visible).map(param => (
+              <ParameterCard key={param.id} parameter={param} />
+            ))}
+          </div>
+
           <div className="glass-panel rounded-xl flex flex-col">
             <div className="p-4 border-b border-[var(--color-border)] flex justify-between items-center">
               <h3 className="font-semibold text-sm uppercase tracking-widest text-[var(--color-muted)]">Telemetry Live (Last 24h)</h3>
@@ -193,6 +209,38 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function ParameterCard({ parameter }: { parameter: any }) {
+  // Use a base value for simulation if no telemetry exists
+  const baseValue = (parameter.normal_min + (parameter.normal_max - parameter.normal_min) * 0.5);
+  const value = parameter.last_value !== undefined ? parameter.last_value : baseValue.toFixed(1);
+  
+  let statusColor = "bg-[var(--color-success)]";
+  const numValue = parseFloat(value);
+  
+  if (parameter.direction === 'above') {
+    if (numValue >= parameter.critical_threshold) statusColor = "bg-[var(--color-destructive)] shadow-[0_0_8px_var(--color-destructive)]";
+    else if (numValue >= parameter.warning_threshold) statusColor = "bg-[var(--color-warning)] shadow-[0_0_8px_var(--color-warning)]";
+  } else {
+    if (numValue <= parameter.critical_threshold) statusColor = "bg-[var(--color-destructive)] shadow-[0_0_8px_var(--color-destructive)]";
+    else if (numValue <= parameter.warning_threshold) statusColor = "bg-[var(--color-warning)] shadow-[0_0_8px_var(--color-warning)]";
+  }
+
+  return (
+    <div className="glass-panel p-3 rounded-xl border-l-4 border-l-[var(--color-border)] hover:border-l-[var(--color-primary)] transition-all group cursor-help">
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[9px] uppercase font-bold tracking-widest text-[var(--color-muted)] group-hover:text-[var(--color-primary)] transition-colors truncate pr-1">
+          {parameter.display_name}
+        </span>
+        <div className={cn("w-1.5 h-1.5 rounded-full shrink-0", statusColor)} />
+      </div>
+      <div className="flex items-baseline gap-1">
+        <span className="text-lg font-bold font-mono tracking-tight">{value}</span>
+        <span className="text-[10px] font-medium text-[var(--color-muted)] uppercase">{parameter.unit}</span>
       </div>
     </div>
   );

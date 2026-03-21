@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { NLChatBubble } from "@/components/agents/NLChatBubble";
 import { ChatMessage } from "@/types";
-import { Bot, FileText, Send, Sparkles, AlertTriangle } from "lucide-react";
+import { Bot, FileText, Send, Sparkles, AlertTriangle, Mic, Image as ImageIcon, StopCircle } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
 
@@ -15,7 +15,11 @@ export default function QueryPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const mediaRecorder = useRef<MediaRecorder | null>(null);
+  const audioChunks = useRef<Blob[]>([]);
 
   useEffect(() => {
     if (initialQ) {
@@ -69,6 +73,101 @@ export default function QueryPage() {
         agentType: "Orchestrator"
       };
       setMessages(prev => [...prev, errorMsg]);
+    } finally {
+      setIsTyping(false);
+    }
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder.current = new MediaRecorder(stream);
+      audioChunks.current = [];
+      mediaRecorder.current.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunks.current.push(e.data);
+      };
+      mediaRecorder.current.onstop = handleVoiceSend;
+      mediaRecorder.current.start();
+      setIsRecording(true);
+    } catch (err) {
+      console.error("Mic access denied:", err);
+    }
+  };
+
+  const stopRecording = () => {
+    mediaRecorder.current?.stop();
+    setIsRecording(false);
+  };
+
+  const handleVoiceSend = async () => {
+    const audioBlob = new Blob(audioChunks.current, { type: 'audio/wav' });
+    const formData = new FormData();
+    formData.append("file", audioBlob);
+    formData.append("machineId", machineId || "GLOBAL");
+
+    setIsTyping(true);
+    try {
+      const response = await api.chatVoice(formData);
+      
+      const userMsg: ChatMessage = {
+        id: Date.now().toString(),
+        role: "user",
+        content: `🎤 (Voice) ${response.transcript}`,
+        timestamp: new Date().toISOString()
+      };
+      setMessages(prev => [...prev, userMsg]);
+
+      const assistantMsg: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        content: response.message,
+        timestamp: new Date().toISOString(),
+        agentType: "Orchestrator"
+      };
+      setMessages(prev => [...prev, assistantMsg]);
+
+      if (response.audio) {
+        const audio = new Audio(`data:audio/wav;base64,${response.audio}`);
+        audio.play();
+      }
+    } catch (error) {
+      console.error("Voice chat error:", error);
+    } finally {
+      setIsTyping(false);
+    }
+  };
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("prompt", "Analyze this machine status");
+    formData.append("machineId", machineId || "GLOBAL");
+
+    setIsTyping(true);
+    try {
+      const response = await api.chatVision(formData);
+      
+      const userMsg: ChatMessage = {
+        id: Date.now().toString(),
+        role: "user",
+        content: "📷 Uploaded an image for visual analysis.",
+        timestamp: new Date().toISOString()
+      };
+      setMessages(prev => [...prev, userMsg]);
+
+      const assistantMsg: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        content: response.message,
+        timestamp: new Date().toISOString(),
+        agentType: "Orchestrator"
+      };
+      setMessages(prev => [...prev, assistantMsg]);
+    } catch (error) {
+      console.error("Vision chat error:", error);
     } finally {
       setIsTyping(false);
     }
@@ -130,16 +229,44 @@ export default function QueryPage() {
             className="w-full max-w-4xl bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-2 flex items-center gap-2 mb-4 mt-2 shadow-[0_-10px_40px_rgba(0,0,0,0.3)]"
           >
             <input 
+              type="file" 
+              accept="image/*" 
+              className="hidden" 
+              ref={fileInputRef}
+              onChange={handleImageUpload}
+            />
+            <button 
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="w-10 h-10 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-primary)] transition-colors flex items-center justify-center shrink-0"
+              title="Upload image"
+            >
+              <ImageIcon className="w-5 h-5" />
+            </button>
+
+            <button 
+              type="button"
+              onClick={isRecording ? stopRecording : startRecording}
+              className={`w-10 h-10 rounded-lg transition-colors flex items-center justify-center shrink-0 ${
+                isRecording ? "text-[var(--color-danger)] animate-pulse" : "text-[var(--color-muted)] hover:text-[var(--color-primary)]"
+              }`}
+              title={isRecording ? "Stop recording" : "Voice message"}
+            >
+              {isRecording ? <StopCircle className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+            </button>
+
+            <input 
               type="text" 
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask the Orchestrator..." 
+              placeholder={isRecording ? "Listening..." : "Ask the Orchestrator..."} 
               className="flex-1 bg-transparent border-none outline-none font-mono text-sm px-4"
               autoFocus
+              disabled={isRecording}
             />
             <button 
               type="submit"
-              disabled={!input.trim() || isTyping}
+              disabled={!input.trim() || isTyping || isRecording}
               className="w-10 h-10 rounded-lg bg-[var(--color-primary)] text-[#0D1117] flex items-center justify-center hover:bg-[#00e6b8] transition-colors shadow-[0_0_15px_var(--color-primary)]/30 shrink-0 disabled:opacity-50"
             >
               <Send className="w-4 h-4" />

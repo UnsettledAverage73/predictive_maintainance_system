@@ -20,5 +20,6 @@ psycopg2-binary
 asyncpg
 pytesseract
 pillow
+boto3
 # Local Development
 # ollama (handled via direct API)

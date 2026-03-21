@@ -49,15 +49,52 @@ class MaintenanceAgent:
         else:
             self.pc = None
 
+    def get_parameter_templates(self) -> Dict[str, List[Dict[str, Any]]]:
+        """Library of pre-built parameter templates for common machine types."""
+        return {
+            "Centrifugal Pump": [
+                {"key": "vibration_rms", "name": "Vibration RMS", "unit": "mm/s", "n_min": 0, "n_max": 2.5, "w_th": 3.5, "c_th": 5.0, "dir": "above"},
+                {"key": "pressure", "name": "Pressure", "unit": "bar", "n_min": 2, "n_max": 8, "w_th": 10, "c_th": 12, "dir": "above"},
+                {"key": "cavitation_index", "name": "Cavitation Index", "unit": "index", "n_min": 0, "n_max": 0.3, "w_th": 0.5, "c_th": 0.8, "dir": "above"},
+                {"key": "seal_temp", "name": "Seal Face Temperature", "unit": "°C", "n_min": 30, "n_max": 70, "w_th": 85, "c_th": 100, "dir": "above"}
+            ],
+            "Air Compressor": [
+                {"key": "discharge_pressure", "name": "Discharge Pressure", "unit": "bar", "n_min": 6, "n_max": 8.5, "w_th": 9.5, "c_th": 11, "dir": "above"},
+                {"key": "dew_point", "name": "Dew Point", "unit": "°C", "n_min": -20, "n_max": -10, "w_th": -5, "c_th": 0, "dir": "above"},
+                {"key": "separator_delta_p", "name": "Separator Delta-P", "unit": "bar", "n_min": 0, "n_max": 0.3, "w_th": 0.6, "c_th": 1.0, "dir": "above"}
+            ],
+            "CNC Milling Machine": [
+                {"key": "spindle_load", "name": "Spindle Load", "unit": "%", "n_min": 0, "n_max": 70, "w_th": 85, "c_th": 100, "dir": "above"},
+                {"key": "tool_wear_index", "name": "Tool Wear Index", "unit": "index", "n_min": 0, "n_max": 50, "w_th": 80, "c_th": 95, "dir": "above"},
+                {"key": "coolant_flow", "name": "Coolant Flow Rate", "unit": "L/min", "n_min": 15, "n_max": 25, "w_th": 10, "c_th": 5, "dir": "below"}
+            ]
+            # ... can add more templates as needed
+        }
+
     def get_orchestrator_response(self, query: str, machine_id: str = "GLOBAL") -> Dict[str, Any]:
         """
         The Sovereign Orchestrator: 
-        Retrieves context from SQL, JSON, and Pinecone before reasoning.
+        Retrieves context from SQL (Dynamic Parameters), JSON, and Pinecone before reasoning.
         """
-        # 1. Fetch Context from Vector DB (Pinecone)
+        from src.data import database
+
+        # 1. Fetch Dynamic Parameter Context
+        param_context_str = ""
+        if machine_id != "GLOBAL":
+            params = database.get_machine_parameters(machine_id)
+            param_details = []
+            for p in params:
+                if p['is_used_for_prediction']:
+                    # In a real scenario, we'd fetch latest telemetry for each param
+                    detail = f"- {p['display_name']} ({p['parameter_key']}): unit={p['unit']}, normal={p['normal_min']}-{p['normal_max']}, warning={p['warning_threshold']}, critical={p['critical_threshold']}. {p['description'] or ''}"
+                    param_details.append(detail)
+            if param_details:
+                param_context_str = "\nDynamic Parameter Registry:\n" + "\n".join(param_details)
+
+        # 2. Fetch Context from Vector DB (Pinecone)
         vector_context = self.query_similar_issues(query, top_k=2)
         
-        # 2. Fetch Context from SQL (Latest Alerts/Telemtry)
+        # 3. Fetch Context from SQL (Latest Alerts/Telemtry)
         import sqlite3
         conn = sqlite3.connect("data/factory_ops.db")
         cursor = conn.cursor()
@@ -65,12 +102,13 @@ class MaintenanceAgent:
         sql_context = [f"{r[0]}: {r[1]}" for r in cursor.fetchall()]
         conn.close()
 
-        # 3. Construct Deep Reasoning Prompt
+        # 4. Construct Deep Reasoning Prompt
         system_prompt = f"""
         You are the Plant-wide Orchestrator AI. 
         Context from Sovereign Memory (RAG): {vector_context}
         Context from Live SQL Ledger: {sql_context}
-        Current Target: {machine_id}
+        {param_context_str}
+        Current Target Machine: {machine_id}
         """
         
         response = self._get_cloud_inference(system_prompt, query)
@@ -79,33 +117,33 @@ class MaintenanceAgent:
         return {
             "message": response,
             "sources": [
-                {"name": "SQLite: ai_alerts", "description": "Latest strategic prescriptions"},
+                {"name": "SQLite: machine_parameters", "description": "Dynamic asset configuration"},
                 {"name": "Vector: Sovereign Memory", "description": f"Retrieved: {vector_context[:50]}..."},
                 {"name": "JSON: maintenance_logs", "description": "Historical servicing patterns"}
             ],
-            "confidence": 94.2 # You can calculate this based on RAG scores
+            "confidence": 94.2
         }
 
     def process_multimodal_event(self, telemetry_data: Dict[str, Any], image_bytes: bytes) -> Dict[str, Any]:
         """
-        Combines sensor data with visual context (OCR) for deep diagnostics.
+        Combines sensor data with visual context (Sarvam Vision/OCR) for deep diagnostics.
         """
-        raw_ocr = ocr_engine.extract_text(image_bytes)
+        visual_context = self.analyze_document_vision(image_bytes)
         eq_id = telemetry_data.get("equipment_id", "UNKNOWN")
         
         prompt = f"""
         Analyze machine event. 
         Telemetry: {json.dumps(telemetry_data)}
-        Visual context (OCR): {raw_ocr}
+        Visual context (OCR/Vision): {visual_context}
         """
         
         prescription = self.analyze_patterns() # Fallback to pattern analysis
-        if self.sarvam_client:
+        if self.sarvam_key:
             prescription = self._get_sarvam_inference("You are a multimodal diagnostic expert.", prompt)
             
         return {
             "equipment_id": eq_id,
-            "raw_ocr": raw_ocr,
+            "visual_context": visual_context,
             "prescription": prescription,
             "telemetry": telemetry_data
         }
@@ -193,14 +231,101 @@ class MaintenanceAgent:
         print(f"--- [GROQ] Reasoning ---")
         return self._get_cloud_inference(system_prompt, user_content)
 
+    def speech_to_text(self, audio_bytes: bytes, language_code: str = "hi-IN") -> str:
+        """
+        Sarvam AI: Converts speech (audio bytes) into text.
+        Supports 22 Indian languages.
+        """
+        if not self.sarvam_key:
+            return "Sarvam API Key not configured."
+            
+        url = "https://api.sarvam.ai/speech-to-text"
+        headers = {"api-subscription-key": self.sarvam_key}
+        files = {"file": ("audio.wav", audio_bytes, "audio/wav")}
+        data = {"model": "saaras:v1", "language_code": language_code} # v1 as per most common examples
+        
+        try:
+            response = requests.post(url, headers=headers, files=files, data=data)
+            response.raise_for_status()
+            return response.json().get("transcript", "No transcript found.")
+        except Exception as e:
+            return f"STT Error: {str(e)}"
+
+    def text_to_speech(self, text: str, language_code: str = "hi-IN") -> str:
+        """
+        Sarvam AI: Converts text to speech.
+        Returns base64 encoded audio string.
+        """
+        if not self.sarvam_key:
+            return ""
+            
+        url = "https://api.sarvam.ai/text-to-speech"
+        headers = {
+            "api-subscription-key": self.sarvam_key,
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "input": text,
+            "model": "bulbul:v1",
+            "speaker": "meera",
+            "target_language_code": language_code
+        }
+        
+        try:
+            response = requests.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+            # Sarvam returns JSON with "audio" field containing base64 string
+            return response.json().get("audio", "")
+        except Exception as e:
+            print(f"TTS Error: {e}")
+            return ""
+
+    def analyze_document_vision(self, image_bytes: bytes) -> str:
+        """
+        Sarvam AI: Multimodal/Document Intelligence.
+        Analyzes images and extracts context.
+        """
+        if not self.sarvam_key:
+            return "Sarvam API Key not configured."
+            
+        url = "https://api.sarvam.ai/document-intelligence/v1"
+        headers = {"api-subscription-key": self.sarvam_key}
+        files = {"file": ("image.jpg", image_bytes, "image/jpeg")}
+        
+        try:
+            response = requests.post(url, headers=headers, files=files)
+            response.raise_for_status()
+            # Assuming it returns markdown or text in the response
+            return response.json().get("content", "No content extracted.")
+        except Exception as e:
+            # Fallback to local OCR if Sarvam fails
+            print(f"Sarvam Vision Error: {e}. Falling back to local OCR.")
+            return ocr_engine.extract_text(image_bytes)
+
     def _get_sarvam_inference(self, system_prompt, user_content) -> str:
         try:
-            response = self.sarvam_client.chat.completions.create(
-                model=self.sarvam_model,
-                messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_content}],
-                temperature=0.1
-            )
-            return response.choices[0].message.content
+            # Check if SarvamAI SDK has chat completion, if not use requests
+            if hasattr(self.sarvam_client, "chat") and hasattr(self.sarvam_client.chat, "completions"):
+                response = self.sarvam_client.chat.completions.create(
+                    model=self.sarvam_model,
+                    messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_content}],
+                    temperature=0.1
+                )
+                return response.choices[0].message.content
+            else:
+                # Manual requests fallback for chat
+                url = "https://api.sarvam.ai/chat/completions"
+                headers = {
+                    "api-subscription-key": self.sarvam_key,
+                    "Content-Type": "application/json"
+                }
+                payload = {
+                    "model": self.sarvam_model,
+                    "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_content}]
+                }
+                response = requests.post(url, headers=headers, json=payload)
+                response.raise_for_status()
+                return response.json()["choices"][0]["message"]["content"]
         except Exception as e:
             return f"Error: {e}"
 
