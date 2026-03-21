@@ -108,3 +108,4 @@ def run_ingestor():
 
 if __name__ == "__main__":
     run_ingestor()
+

@@ -1,45 +1,86 @@
 services:
-  backend:
-    build: .
-    # command: ["python", "src/api.py"]  # Standard execution
-    # For Level 8 scaling, we use uvicorn for the FastAPI gateway
-    command: ["uvicorn", "src.api:app", "--host", "0.0.0.0", "--port", "8000"]
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      - POSTGRES_USER=predictmaint
+      - POSTGRES_PASSWORD=predictmaint_pass
+      - POSTGRES_DB=predictmaint
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - predictmaint-net
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - predictmaint-net
+
+  influxdb:
+    image: influxdb:2.7-alpine
+    ports:
+      - "8086:8086"
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=password1234
+      - DOCKER_INFLUXDB_INIT_ORG=predictmaint
+      - DOCKER_INFLUXDB_INIT_BUCKET=telemetry
+      - DOCKER_INFLUXDB_INIT_RETENTION=1w
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+    networks:
+      - predictmaint-net
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    command: start-dev
+    environment:
+      - KC_BOOTSTRAP_ADMIN_USERNAME=admin
+      - KC_BOOTSTRAP_ADMIN_PASSWORD=admin
+    ports:
+      - "8080:8080"
+    networks:
+      - predictmaint-net
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - predictmaint-net
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/docker/api.Dockerfile
     ports:
       - "8000:8000"
     volumes:
-      - ./data:/app/data
+      - ./backend/app:/app/app
     environment:
-      - GROQ_API_KEY=${GROQ_API_KEY}
-      - PINECONE_API_KEY=${PINECONE_API_KEY}
-      - SARVAM_API_KEY=${SARVAM_API_KEY}
+      - DATABASE_URL=postgresql+asyncpg://predictmaint:predictmaint_pass@postgres:5432/predictmaint
+      - REDIS_URL=redis://redis:6379/0
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=my-super-secret-auth-token
+      - OLLAMA_BASE_URL=http://ollama:11434
     depends_on:
-      - ingestor
+      - postgres
+      - redis
+      - influxdb
+    networks:
+      - predictmaint-net
 
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    command: ["npm", "start", "--", "-H", "0.0.0.0"]
-    ports:
-      - "3000:3000"
-    environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
-    depends_on:
-      - backend
-
-  ingestor:
-    build: .
-    command: ["python", "src/data/iot_ingestor.py"]
-    volumes:
-      - ./data:/app/data
-    environment:
-      - GROQ_API_KEY=${GROQ_API_KEY}
-
-  simulator:
-    build: .
-    command: ["python", "src/data/iot_simulator.py"]
-    volumes:
-      - ./data:/app/data
+networks:
+  predictmaint-net:
+    driver: bridge
 
 volumes:
-  data:
+  postgres_data:
+  influxdb_data:
+  ollama_data:

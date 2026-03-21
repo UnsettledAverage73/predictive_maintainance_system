@@ -1,5 +1,5 @@
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 
 DB_PATH = "data/factory_ops.db"
@@ -47,10 +47,88 @@ def init_db():
             FOREIGN KEY(resolved_anomaly_id) REFERENCES ai_alerts(id)
         )
     ''')
+
+    # 4. Asset Layer: Persistent machine metadata
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS equipment (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            production_line TEXT,
+            protocol TEXT,
+            status TEXT DEFAULT 'online',
+            mtbf INTEGER,
+            last_maintenance_date TEXT,
+            next_scheduled_date TEXT,
+            agent_id TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
     
     conn.commit()
     conn.close()
     print(f"--- [DATABASE UPDATED] Schema V2 Live at {DB_PATH} ---")
+
+def add_equipment(id, name, production_line, protocol):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    try:
+        # Create table if it doesn't exist
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS equipment_metadata (
+                id TEXT PRIMARY KEY,
+                name TEXT,
+                production_line TEXT,
+                protocol TEXT,
+                status TEXT DEFAULT 'online',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute(
+            "INSERT INTO equipment_metadata (id, name, production_line, protocol) VALUES (?, ?, ?, ?)",
+            (id, name, production_line, protocol)
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"DB Error: {e}")
+        return False
+    finally:
+        conn.close()
+
+def add_equipment(eq_id, name, line, protocol, agent_id=None):
+    """
+    Onboards a new physical asset into the Sovereign Matrix.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            INSERT OR REPLACE INTO equipment (id, name, production_line, protocol, agent_id, last_maintenance_date, next_scheduled_date, mtbf)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            eq_id, name, line, protocol, 
+            agent_id or f"agt-{eq_id}", 
+            datetime.now().date().isoformat(),
+            (datetime.now() + timedelta(days=90)).date().isoformat(),
+            5000
+        ))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"Equipment Onboarding Error: {e}")
+        return False
+    finally:
+        conn.close()
+
+def get_all_equipment_metadata():
+    """Retrieves all registered equipment metadata."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM equipment")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
 
 
 def log_manual_repair(eq_id, operator, action, parts="None", alert_id=None):

@@ -47,9 +47,11 @@ class TestMaintenanceAgent(unittest.TestCase):
         
         # Mock the Pinecone index return structure
         agent.index = MagicMock()
-        agent.index.query.return_value = {
-            "matches": [{"metadata": {"notes": "Previous bearing fix"}, "score": 0.9}]
-        }
+        mock_match = MagicMock()
+        mock_match.metadata = {"notes": "Previous bearing fix"}
+        mock_result = MagicMock()
+        mock_result.matches = [mock_match]
+        agent.index.query.return_value = mock_result
         
         results = agent.query_similar_issues("High vibration on CNC001")
         self.assertIsNotNone(results)
@@ -64,3 +66,22 @@ class TestMaintenanceAgent(unittest.TestCase):
         
         result = agent.ingest_human_fix("CNC001", "Replaced sensor")
         self.assertIn("Knowledge absorbed", result)
+
+    @patch('src.agent.maintenance_agent.ocr_engine.extract_text')
+    @patch('src.agent.maintenance_agent.MaintenanceAgent._get_sarvam_inference')
+    def test_multimodal_processing(self, mock_sarvam, mock_ocr):
+        """Protocol: Test the new multimodal vision+telemetry integration."""
+        mock_ocr.return_value = "MACHINE ID: CNC001 | MODEL: X-SERIES"
+        mock_sarvam.return_value = "Hinglish Prescription: CNC001 check bearings for overheating. Replace immediately."
+        
+        agent = MaintenanceAgent(self.test_data_path)
+        agent.sarvam_client = MagicMock() # Mock the client so it tries sarvam path
+        
+        result = agent.process_multimodal_event(
+            telemetry_data={"equipment_id": "CNC001", "temperature": 135},
+            image_bytes=b"fake_image_data"
+        )
+        
+        self.assertEqual(result["equipment_id"], "CNC001")
+        self.assertIn("CNC001", result["raw_ocr"])
+        self.assertIn("Hinglish Prescription", result["prescription"])

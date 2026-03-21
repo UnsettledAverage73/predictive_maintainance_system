@@ -6,8 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
-from pydantic import BaseModel
-
+from twilio.rest import Client
 from src.agent.maintenance_agent import MaintenanceAgent
 from src.data.analytics import calculate_failure_probability
 from src.agent.reporter import SovereignReporter
@@ -27,6 +26,7 @@ app.add_middleware(
 DATA_PATH = "data/sample_maintenance_data.json"
 IOT_PATH = "data/iot_stream.json"
 DB_PATH = "data/factory_ops.db"
+COMMAND_FILE = "data/commands.json"
 
 # Initialize AI Agent with context windowing
 agent = MaintenanceAgent(DATA_PATH)
@@ -44,11 +44,95 @@ class RepairRequest(BaseModel):
     parts_replaced: Optional[str] = "None"
     alert_id: Optional[int] = None
 
+class OnboardRequest(BaseModel):
+    id: str
+    name: str
+    productionLine: str
+    protocol: str
+
+def send_whatsapp_alert(equipment_id: str, severity: str, prescription: str):
+    """
+    Sovereign Protocol: Escalates critical anomalies to WhatsApp.
+    """
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+    if not account_sid or not auth_token:
+        return None
+        
+    from_whatsapp = "whatsapp:+14155238886" # Twilio Sandbox Number
+    to_whatsapp = f"whatsapp:{os.getenv('MY_PHONE_NUMBER')}" # Your Verified Number
+
+    client = Client(account_sid, auth_token)
+
+    # Industrial Grade Alert Formatting
+    message_body = (
+        f"🚨 *SOVEREIGN INDUSTRIAL ALERT*\n\n"
+        f"*Asset:* {equipment_id}\n"
+        f"*Severity:* {severity.upper()}\n\n"
+        f"*AI Prescription:* \n_{prescription}_\n\n"
+        f"Check Dashboard: http://localhost:3000/dashboard/alerts"
+    )
+
+    try:
+        message = client.messages.create(
+            body=message_body,
+            from_=from_whatsapp,
+            to=to_whatsapp
+        )
+        return message.sid
+    except Exception as e:
+        print(f"WhatsApp Dispatch Error: {e}")
+        return None
+
+@app.post("/api/chat")
+async def chat_with_agent(request: ChatRequest):
+    """
+    Sovereign Deep Reasoning: 
+    Connects the Frontend Orchestrator to the Multi-Agent Backend.
+    """
+    user_msg = request.messages[-1]["content"]
+    
+    # Enrich context if machine specific
+    context_prefix = ""
+    if request.machineId != "GLOBAL" and request.equipmentData:
+        context_prefix = f"Analyzing Asset: {request.machineName} ({request.machineId}). Current State: {json.dumps(request.equipmentData)}. "
+
+    try:
+        # Call the upgraded Orchestrator logic
+        result = agent.get_orchestrator_response(
+            query=context_prefix + user_msg, 
+            machine_id=request.machineId
+        )
+        
+        return {
+            "message": result["message"],
+            "sources": result["sources"],
+            "confidence": result["confidence"],
+            "machineId": request.machineId
+        }
+    except Exception as e:
+        print(f"Orchestrator Failure: {e}")
+        raise HTTPException(status_code=500, detail="Neural link to Sovereign Brain severed.")
+    
+@app.post("/api/equipment")
+async def onboard_machine(request: OnboardRequest):
+    """Onboards a new machine into the system."""
+    from src.data.database import add_equipment
+    success = add_equipment(
+        request.id,
+        request.name,
+        request.productionLine,
+        request.protocol
+    )
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to onboard machine")
+    return {"status": "success", "message": f"Machine {request.name} onboarded successfully"}
+
 @app.post("/api/logs")
 async def log_repair(request: RepairRequest):
     """
     The Sovereign Feedback Entrypoint.
-    Records the human fix and injects it into the AI's long-term memory.
+    Records the human fix, actuates hardware recovery, and injects knowledge into AI memory.
     """
     from src.data.database import log_manual_repair
     
@@ -64,18 +148,36 @@ async def log_repair(request: RepairRequest):
     if not log_id:
         raise HTTPException(status_code=500, detail="Failed to write to Sovereign Ledger")
 
-    # 2. Synchronize with Vector Memory (RAG Learning)
-    # This makes the AI 'remember' this fix for the next time this machine fails.
+    # 2. Sovereign Actuation: Tell the Simulator the machine is fixed!
+    try:
+        command = {
+            "equipment_id": request.equipment_id,
+            "action": "RESET_LOAD", # Return to 100% power
+            "value": 1.0,
+            "timestamp": datetime.now().isoformat()
+        }
+        with open(COMMAND_FILE, "w") as f:
+            json.dump(command, f)
+    except Exception as e:
+        print(f"Actuation Error: {e}")
+
+    # 3. Synchronize with Vector Memory (RAG Learning)
     try:
         memory_status = agent.ingest_human_fix(request.equipment_id, request.action_taken)
         return {
             "status": "success",
             "log_id": log_id,
             "memory_sync": memory_status,
-            "message": f"Fix recorded for {request.equipment_id}. Knowledge absorbed."
+            "message": f"Fix recorded for {request.equipment_id}. Knowledge absorbed. Machine returning to full capacity."
         }
     except Exception as e:
         return {"status": "partial_success", "log_id": log_id, "error": str(e)}
+
+@app.get("/api/schedule")
+async def get_maintenance_schedule():
+    """Returns the AI-prioritized maintenance schedule."""
+    tasks = agent.generate_prioritized_schedule()
+    return tasks
 
 @app.get("/api/factory/report")
 async def get_daily_report():
@@ -89,32 +191,59 @@ async def get_daily_report():
 @app.get("/api/history/{equipment_id}")
 async def get_machine_history(equipment_id: str):
     """Retrieves the full human-fix history for a specific asset."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT * FROM manual_logs 
-        WHERE equipment_id = ? 
-        ORDER BY timestamp DESC
-    """, (equipment_id,))
-    rows = cursor.fetchall()
-    conn.close()
-    return [dict(row) for row in rows]
+    if not os.path.exists(DB_PATH):
+        return []
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM manual_logs 
+            WHERE equipment_id = ? 
+            ORDER BY timestamp DESC
+        """, (equipment_id,))
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+    except Exception:
+        return []
 
 @app.get("/api/equipment")
 async def get_all_equipment():
     """
-    Sovereign Intelligence Layer: Merges legacy logs with real-time 
+    Sovereign Intelligence Layer: Merges metadata with real-time 
     telemetry and runs a Linear Regression slope analysis for RUL prediction.
     """
-    from src.data.analytics import calculate_failure_probability
+    from src.data.database import get_all_equipment_metadata
     
-    static_data = agent._load_data()
-    equipment_ids = set()
-    for log in static_data.get("maintenance_logs", []):
-        equipment_ids.add(log["equipment_id"])
+    # 1. Pull registered equipment metadata
+    try:
+        equipment_metadata = get_all_equipment_metadata()
+    except Exception:
+        equipment_metadata = []
+    
+    # Fallback to demo data if empty
+    if not equipment_metadata:
+        static_data = agent._load_data()
+        equipment_ids = set()
+        for log in static_data.get("maintenance_logs", []):
+            equipment_ids.add(log["equipment_id"])
+        
+        for eq_id in equipment_ids:
+            name = next((log["equipment_name"] for log in static_data["maintenance_logs"] if log["equipment_id"] == eq_id), eq_id)
+            equipment_metadata.append({
+                "id": eq_id,
+                "name": name,
+                "production_line": "Line " + str(hash(eq_id) % 3 + 1),
+                "protocol": ["OPC-UA", "MQTT", "Modbus"][hash(eq_id) % 3],
+                "status": "online",
+                "mtbf": 4000 + (hash(eq_id) % 2000),
+                "last_maintenance_date": "2024-02-28",
+                "next_scheduled_date": "2024-12-01",
+                "agent_id": f"agt-{eq_id}"
+            })
 
-    # 1. Pull latest telemetry for current status display
+    # 2. Pull latest telemetry
     live_telemetry = {}
     if os.path.exists(DB_PATH):
         try:
@@ -131,14 +260,13 @@ async def get_all_equipment():
                 live_telemetry[r[0]] = {"temperature": r[1], "vibration": r[2]}
             
             results = []
-            for eq_id in equipment_ids:
-                name = next((log["equipment_name"] for log in static_data["maintenance_logs"] if log["equipment_id"] == eq_id), eq_id)
-                
+            for eq in equipment_metadata:
+                eq_id = eq["id"]
                 stats = live_telemetry.get(eq_id, {"temperature": 0, "vibration": 0})
                 temp = stats.get("temperature", 0)
                 vib = stats.get("vibration", 0)
 
-                # 2. Analytics: Fetch last 20 readings to calculate the Slope
+                # 3. Analytics
                 cursor.execute("""
                     SELECT temperature FROM sensor_readings 
                     WHERE equipment_id = ? 
@@ -146,98 +274,112 @@ async def get_all_equipment():
                 """, (eq_id,))
                 recent_temps = [{"temperature": r[0]} for r in cursor.fetchall()]
                 
-                # Run the Predictive Engine
                 prob, time_left = calculate_failure_probability(recent_temps)
 
-                # 3. Decision Logic: Define Status based on Prediction + Thresholds
+                # 4. Decision Logic
                 is_critical = temp > 130 or prob > 80
                 is_warning = temp > 110 or prob > 50
 
                 results.append({
                     "id": eq_id,
-                    "name": name,
+                    "name": eq["name"],
                     "type": "Industrial Asset",
-                    "status": "critical" if is_critical else ("warning" if is_warning else "healthy"),
+                    "status": "critical" if is_critical else ("warning" if is_warning else "online"),
                     "temperature": round(temp, 1),
                     "vibration": round(vib, 2),
-                    "failureProbability": prob,          # New Strategic Metric
-                    "minutesToFailure": time_left,      # New Strategic Metric
+                    "failureProbability": prob,
+                    "minutesToFailure": time_left,
                     "healthScore": 100 - prob,
-                    "efficiency": 95 - (prob * 0.3),
-                    "lastMaintenance": "2024-02-28",
-                    "failureRisk": "high" if is_critical else ("medium" if is_warning else "low")
+                    "riskScore": prob,
+                    "efficiency": round(95 - (prob * 0.3), 1),
+                    "lastMaintenanceDate": eq.get("last_maintenance_date", "2024-01-01"),
+                    "nextScheduledDate": eq.get("next_scheduled_date", "2024-12-31"),
+                    "failureRisk": "high" if is_critical else ("medium" if is_warning else "low"),
+                    "productionLine": eq.get("production_line", "Line 1"),
+                    "protocol": eq.get("protocol", "MQTT"),
+                    "mtbf": eq.get("mtbf", 5000),
+                    "openWorkOrders": 1 if is_warning or is_critical else 0,
+                    "agentId": eq.get("agent_id", f"agt-{eq_id}")
                 })
             
             conn.close()
             return results
-            
         except Exception as e:
             print(f"Sovereign API Error: {e}")
             return []
 
     return []
 
+@app.get("/api/telemetry/{equipment_id}")
+async def get_machine_telemetry(equipment_id: str):
+    """Fetches real-time telemetry for the chart."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    # Fetch last 50 points for the graph
+    cursor.execute("""
+        SELECT timestamp as time, temperature, vibration 
+        FROM sensor_readings 
+        WHERE equipment_id = ? 
+        ORDER BY timestamp DESC LIMIT 50
+    """, (equipment_id,))
+    
+    # Reverse so time flows left-to-right on the chart
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return rows[::-1]
+
+@app.get("/api/history/{equipment_id}")
+async def get_machine_history(equipment_id: str):
+    """Fetches the repair history for the table."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    # Pulling from your manual logs or alerts table
+    cursor.execute("""
+        SELECT timestamp, action_taken, operator_name 
+        FROM manual_logs 
+        WHERE equipment_id = ? 
+        ORDER BY timestamp DESC
+    """, (equipment_id,))
+    
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return rows
+
 @app.post("/api/equipment/{equipment_id}/mitigate")
 async def mitigate_risk(equipment_id: str):
     """
-    Sovereign Intervention: Sends a 'Throttling' command to the 
-    industrial controller (Simulator/Rust) to prevent failure.
+    Sovereign Intervention: Sends a 'Throttling' command.
     """
     command = {
         "equipment_id": equipment_id,
         "action": "THROTTLE_LOAD",
-        "value": 0.5, # Reduce speed by 50%
-        "timestamp": datetime.now().isoformat()
-    }
-    
-    with open("data/commands.json", "w") as f:
-        json.dump(command, f)
-        
-    return {"status": "Command Dispatched", "action": "Load Reduction Active"}
-
-@app.post("/api/logs")
-async def log_repair(request: RepairRequest):
-    from src.data.database import log_manual_repair
-    
-    # 1. Log to SQLite
-    log_id = log_manual_repair(request.equipment_id, request.operator_name, 
-                              request.action_taken, request.parts_replaced)
-    
-    # 2. Sovereign Actuation: Tell the Simulator the machine is fixed!
-    command = {
-        "equipment_id": request.equipment_id,
-        "action": "RESET_LOAD", # Return to 100% power
-        "value": 1.0,
+        "value": 0.5,
         "timestamp": datetime.now().isoformat()
     }
     
     with open(COMMAND_FILE, "w") as f:
         json.dump(command, f)
-
-    # 3. Sync to Pinecone (Knowledge Absorption)
-    memory_status = agent.ingest_human_fix(request.equipment_id, request.action_taken)
-    
-    return {"status": "success", "message": "Repair logged. Machine returning to full capacity."}
+        
+    return {"status": "Command Dispatched", "action": "Load Reduction Active"}
 
 @app.get("/api/factory/stats")
 async def get_factory_stats():
     """
-    Sovereign Executive Summary: Calculates Global Risk Index (GRI)
-    based on the 'Weakest Link' theory of industrial production.
+    Sovereign Executive Summary.
     """
     all_equipment = await get_all_equipment()
     if not all_equipment:
-        return {"globalRisk": 0, "activeAlerts": 0, "avgHealth": 100}
+        return {"globalRisk": 0, "activeAlerts": 0, "avgHealth": 100, "factoryStatus": "N/A"}
 
-    # Weakest Link Theory: Global risk is heavily weighted by the highest individual risk
     risks = [e["failureProbability"] for e in all_equipment]
     max_risk = max(risks)
     avg_risk = sum(risks) / len(risks)
-    
-    # Global Risk Index (GRI) formula
     global_risk_index = (max_risk * 0.7) + (avg_risk * 0.3)
-    
-    active_alerts = len([e for e in all_equipment if e["status"] != "healthy"])
+    active_alerts = len([e for e in all_equipment if e["status"] != "online"])
 
     return {
         "globalRisk": round(global_risk_index, 1),
@@ -246,9 +388,30 @@ async def get_factory_stats():
         "factoryStatus": "Critical" if global_risk_index > 75 else ("Degraded" if global_risk_index > 40 else "Optimal")
     }
 
+@app.post("/api/equipment")
+async def onboard_machine(request: OnboardRequest):
+    """
+    Sovereign Onboarding: 
+    Validates machine parameters and registers it in the Global Asset Registry.
+    """
+    # In a real factory, you'd perform a 'ping' to the MQTT broker here
+    print(f"--- [ONBOARDING] Initializing Agent for {request.name} via {request.protocol} ---")
+    
+    success = add_equipment(
+        id=request.id,
+        name=request.name,
+        production_line=request.productionLine,
+        protocol=request.protocol
+    )
+    
+    if not success:
+        raise HTTPException(status_code=500, detail="Ledger Write Failed")
+
+    return {"status": "Agent Spawned", "id": request.id}
+
 @app.get("/api/telemetry/{equipment_id}")
 async def get_machine_telemetry(equipment_id: str, minutes: int = 60):
-    """Retrieves time-series data for high-performance charting."""
+    """Retrieves time-series data."""
     if not os.path.exists(DB_PATH):
         return []
 
@@ -256,8 +419,6 @@ async def get_machine_telemetry(equipment_id: str, minutes: int = 60):
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        
-        # Pull data points for the requested window
         cursor.execute("""
             SELECT timestamp, temperature, vibration 
             FROM sensor_readings 
@@ -265,7 +426,6 @@ async def get_machine_telemetry(equipment_id: str, minutes: int = 60):
             AND timestamp > datetime('now', '-' || ? || ' minutes')
             ORDER BY timestamp ASC
         """, (equipment_id, minutes))
-        
         rows = cursor.fetchall()
         conn.close()
         return [dict(row) for row in rows]
@@ -274,7 +434,7 @@ async def get_machine_telemetry(equipment_id: str, minutes: int = 60):
 
 @app.get("/api/alerts")
 async def get_alerts():
-    """Retrieves AI strategic prescriptions for the 'Active Alerts' panel."""
+    """Retrieves AI strategic prescriptions."""
     if not os.path.exists(DB_PATH):
         return []
 
@@ -282,32 +442,12 @@ async def get_alerts():
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        # Only get the 15 most recent tactical prescriptions
         cursor.execute("SELECT * FROM ai_alerts ORDER BY timestamp DESC LIMIT 15")
         rows = cursor.fetchall()
         conn.close()
         return [dict(row) for row in rows]
     except Exception:
         return []
-
-@app.post("/api/chat")
-async def chat_with_agent(request: ChatRequest):
-    """Deep reasoning endpoint for machine-specific troubleshooting."""
-    user_msg = request.messages[-1]["content"]
-    
-    # Enrich AI context with the current machine state
-    context = f"Asset: {request.machineName} ({request.machineId})\n"
-    if request.equipmentData:
-        context += f"Current State: {json.dumps(request.equipmentData)}\n"
-
-    system_prompt = f"You are an expert industrial maintenance CTO. {context}"
-    
-    # Call the agent's cloud reasoning (llama-3.3-70b-versatile)
-    try:
-        response = agent._get_cloud_inference(system_prompt, user_msg)
-        return {"message": response, "machineId": request.machineId}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn

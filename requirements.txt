@@ -14,5 +14,11 @@ paho-mqtt
 fastapi
 uvicorn
 numpy
+python-multipart
+# Database & OCR
+psycopg2-binary
+asyncpg
+pytesseract
+pillow
 # Local Development
 # ollama (handled via direct API)

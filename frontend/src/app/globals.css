@@ -1,0 +1,56 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-background: var(--bg-color);
+  --color-foreground: var(--fg-color);
+  --color-surface: var(--surface-color);
+  --color-border: var(--border-color);
+  --color-card: var(--card-color);
+  --color-primary: #00D4AA;
+  --color-warning: #F59E0B;
+  --color-destructive: #EF4444;
+  --color-info: #3B82F6;
+  --color-success: #22C55E;
+  --color-muted: var(--muted-color);
+  
+  --font-sans: var(--font-jakarta);
+  --font-mono: var(--font-jetbrains);
+}
+
+:root, [data-theme="dark"] {
+  --bg-color: #0D1117;
+  --fg-color: #E6EDF3;
+  --surface-color: #161B22;
+  --border-color: #30363D;
+  --card-color: #1C2128;
+  --muted-color: #8B949E;
+  --glass-bg: rgba(28, 33, 40, 0.7);
+}
+
+[data-theme="light"] {
+  --bg-color: #F8FAFC;
+  --fg-color: #0F172A;
+  --surface-color: #F1F5F9;
+  --border-color: #E2E8F0;
+  --card-color: #FFFFFF;
+  --muted-color: #64748B;
+  --glass-bg: rgba(255, 255, 255, 0.7);
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-sans), sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  border-color: var(--color-border);
+}
+
+.glass-panel {
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--color-border);
+}
