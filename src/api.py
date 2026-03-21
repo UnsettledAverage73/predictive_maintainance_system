@@ -340,6 +340,8 @@ async def get_all_equipment():
                     "id": eq["id"],
                     "name": eq["name"],
                     "productionLine": eq["production_line"],
+                    "plantId": eq.get("plant_id", "Hosur-01"),
+                    "sector": eq.get("sector", "Electronics"),
                     "protocol": eq["protocol"],
                     "status": "critical" if last[0] > 130 or prob > 80 else ("warning" if last[0] > 110 or prob > 50 else "online"),
                     "temperature": round(last[0], 1),
@@ -453,10 +455,23 @@ async def chat_vision(file: UploadFile = File(...), prompt: str = Form("Describe
 async def get_factory_stats():
     all_equipment = await get_all_equipment()
     if not all_equipment: return {"globalRisk": 0, "activeAlerts": 0, "avgHealth": 100, "factoryStatus": "Optimal"}
+    
     risks = [e.get("failureProbability", 0) for e in all_equipment]
     max_risk = max(risks); avg_risk = sum(risks) / len(risks)
     global_risk = (max_risk * 0.7) + (avg_risk * 0.3)
-    return {"globalRisk": round(global_risk, 1), "activeAlerts": len([e for e in all_equipment if e.get("status") != "online"]), "avgHealth": round(100 - avg_risk, 1), "factoryStatus": "Critical" if global_risk > 75 else ("Degraded" if global_risk > 40 else "Optimal")}
+    
+    # New: Group by Plant
+    plants = set([e.get("plantId", "Unknown") for e in all_equipment])
+    sectors = set([e.get("sector", "General") for e in all_equipment])
+    
+    return {
+        "globalRisk": round(global_risk, 1),
+        "activeAlerts": len([e for e in all_equipment if e.get("status") != "online"]),
+        "avgHealth": round(100 - avg_risk, 1),
+        "factoryStatus": "Critical" if global_risk > 75 else ("Degraded" if global_risk > 40 else "Optimal"),
+        "plantCount": len(plants),
+        "sectorCount": len(sectors)
+    }
 
 @app.get("/api/alerts")
 async def get_alerts():

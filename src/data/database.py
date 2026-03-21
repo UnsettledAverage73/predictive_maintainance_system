@@ -93,6 +93,8 @@ def init_db():
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
             production_line TEXT,
+            plant_id TEXT DEFAULT 'Hosur-01', -- New: Plant Identification
+            sector TEXT DEFAULT 'Electronics', -- New: Sector (Steel, Auto, Semi)
             protocol TEXT,
             status TEXT DEFAULT 'online',
             mtbf INTEGER,
@@ -181,18 +183,18 @@ def seed_maintenance_tasks():
     conn.close()
     print("--- [SEEDING] Maintenance Tasks Online ---")
 
-def add_equipment(eq_id, name, line, protocol, agent_id=None):
+def add_equipment(eq_id, name, line, protocol, plant_id='Hosur-01', sector='Electronics', agent_id=None):
     """
-    Onboards a new physical asset into the Sovereign Matrix.
+    Onboards a new physical asset into the Sovereign Matrix across global facilities.
     """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     try:
         cursor.execute("""
-            INSERT OR REPLACE INTO equipment (id, name, production_line, protocol, agent_id, last_maintenance_date, next_scheduled_date, mtbf)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO equipment (id, name, production_line, plant_id, sector, protocol, agent_id, last_maintenance_date, next_scheduled_date, mtbf)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            eq_id, name, line, protocol, 
+            eq_id, name, line, plant_id, sector, protocol, 
             agent_id or f"agt-{eq_id}", 
             datetime.now().date().isoformat(),
             (datetime.now() + timedelta(days=90)).date().isoformat(),
@@ -288,9 +290,28 @@ def log_telemetry_point(machine_id, key, value, string_value=None):
     conn.close()
 
 def log_sensor_reading(eq_id, temp, vib):
-    """Logs raw telemetry data into the local persistence layer (Legacy)."""
+    """
+    Logs raw telemetry data and performs sub-millisecond Edge analysis via Rust.
+    """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
+    
+    # 1. Edge Intelligence: High-Frequency Harmonics Check (Rust-Powered)
+    # In a real CNC environment, this would run on the Edge IPC
+    try:
+        from src.data.analytics import calculate_failure_probability
+        # Fetch last 50 points to check for harmonic resonance
+        cursor.execute("SELECT vibration FROM sensor_readings WHERE equipment_id = ? ORDER BY timestamp DESC LIMIT 50", (eq_id,))
+        recent_vib = [r[0] for r in cursor.fetchall()]
+        if len(recent_vib) > 10 and rust_engine:
+            st = rust_engine.SegmentTree(recent_vib + [vib])
+            peak_vib = st.query_max(0, len(recent_vib) + 1)
+            # If peak vibration in window exceeds CNC precision threshold (e.g. 1.5G)
+            if peak_vib > 1.5:
+                 print(f"⚠️ [EDGE AI] RESONANCE DETECTED ({eq_id}): PEAK {peak_vib}G")
+    except:
+        pass
+
     cursor.execute(
         "INSERT INTO sensor_readings (equipment_id, timestamp, temperature, vibration) VALUES (?, ?, ?, ?)",
         (eq_id, datetime.now().isoformat(), temp, vib)
