@@ -15,6 +15,7 @@ export default function CloudConnectWizardPage() {
 
   const [awsAccessKey, setAwsAccessKey] = useState('');
   const [awsSecretKey, setAwsSecretKey] = useState('');
+  const [awsSessionToken, setAwsSessionToken] = useState('');
   const [awsRegion, setAwsRegion] = useState('us-east-1');
   const [instanceType, setInstanceType] = useState('t3.small');
   const [storageGb, setStorageGb] = useState(30);
@@ -35,6 +36,7 @@ export default function CloudConnectWizardPage() {
         provider: provider?.toLowerCase(),
         aws_access_key: awsAccessKey,
         aws_secret_key: awsSecretKey,
+        aws_session_token: awsSessionToken || null,
         region: awsRegion,
         instance_type: instanceType,
         storage_gb: storageGb
@@ -177,6 +179,10 @@ export default function CloudConnectWizardPage() {
                     </label>
                     <input type="password" value={awsSecretKey} onChange={e => setAwsSecretKey(e.target.value)} placeholder="••••••••••••••••" className="w-full bg-slate-900 border border-[var(--color-border)] rounded-md px-4 py-3 text-white focus:border-[var(--color-primary)] outline-none font-mono tracking-widest transition-colors" />
                   </div>
+                  <div className="space-y-2 col-span-2">
+                    <label className="text-sm font-medium text-[var(--color-muted)]">Session Token (Optional)</label>
+                    <input type="password" value={awsSessionToken} onChange={e => setAwsSessionToken(e.target.value)} placeholder="FwoGZXIvYXdz..." className="w-full bg-slate-900 border border-[var(--color-border)] rounded-md px-4 py-3 text-white focus:border-[var(--color-primary)] outline-none font-mono tracking-tighter transition-colors" />
+                  </div>
                   <div className="space-y-2">
                     <label className="text-sm font-medium text-[var(--color-muted)]">Storage (GB)</label>
                     <input type="number" value={storageGb} onChange={e => setStorageGb(parseInt(e.target.value))} className="w-full bg-slate-900 border border-[var(--color-border)] rounded-md px-4 py-3 text-white focus:border-[var(--color-primary)] outline-none font-mono transition-colors" />
@@ -240,8 +246,10 @@ export default function CloudConnectWizardPage() {
                   </div>
                   <div className="p-6 grid grid-cols-2 gap-y-6 text-sm">
                     <div><span className="text-[var(--color-muted)] block mb-1.5 uppercase tracking-wider text-[10px] font-bold">Region</span><span className="font-medium">{awsRegion || 'us-east-1'}</span></div>
-                    <div><span className="text-[var(--color-muted)] block mb-1.5 uppercase tracking-wider text-[10px] font-bold">VPC ID</span><span className="font-mono bg-slate-900 px-2 py-0.5 rounded border border-slate-800">{vpcId || 'vpc-0abc1234'}</span></div>
-                    <div><span className="text-[var(--color-muted)] block mb-1.5 uppercase tracking-wider text-[10px] font-bold">Access Key ID</span><span className="font-mono bg-slate-900 px-2 py-0.5 rounded border border-slate-800">AKIAIOSFODNN7EXAMPLE</span></div>
+                    <div><span className="text-[var(--color-muted)] block mb-1.5 uppercase tracking-wider text-[10px] font-bold">Instance Type</span><span className="font-mono bg-slate-900 px-2 py-0.5 rounded border border-slate-800">{instanceType}</span></div>
+                    <div><span className="text-[var(--color-muted)] block mb-1.5 uppercase tracking-wider text-[10px] font-bold">Storage</span><span className="font-mono bg-slate-900 px-2 py-0.5 rounded border border-slate-800">{storageGb} GB</span></div>
+                    <div><span className="text-[var(--color-muted)] block mb-1.5 uppercase tracking-wider text-[10px] font-bold">Session Token</span><span className="font-mono bg-slate-900 px-2 py-0.5 rounded border border-slate-800">{awsSessionToken ? 'Present' : 'None'}</span></div>
+                    <div><span className="text-[var(--color-muted)] block mb-1.5 uppercase tracking-wider text-[10px] font-bold">Access Key ID</span><span className="font-mono bg-slate-900 px-2 py-0.5 rounded border border-slate-800">{awsAccessKey ? `${awsAccessKey.substring(0, 6)}...` : 'Not Set'}</span></div>
                   </div>
                 </div>
               </div>
