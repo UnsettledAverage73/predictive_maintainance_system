@@ -2,18 +2,15 @@
 import { ReactNode } from "react";
 
 interface RBACGateProps {
-  allowedRoles: string[];
+  allowedRoles?: string[];
   children: ReactNode;
   fallback?: ReactNode;
 }
 
-export function RBACGate({ allowedRoles, children, fallback = null }: RBACGateProps) {
-  // Mock role for now, imagine getting this from NextAuth session
-  const userRole = "Admin"; 
-  
-  if (!allowedRoles.includes(userRole)) {
-    return <>{fallback}</>;
-  }
-
+/**
+ * RBACGate - Disables Role-Based Access Control
+ * Always renders children as RBAC has been removed from the system.
+ */
+export function RBACGate({ children }: RBACGateProps) {
   return <>{children}</>;
 }

@@ -32,13 +32,6 @@ export default function LoginPage() {
         </div>
         <h2 className="text-2xl font-bold mb-2">Authentication Successful</h2>
         <p className="text-[var(--color-muted)] mb-6">Initializing session...</p>
-        
-        <div className="flex flex-col gap-2 mt-4 items-center">
-          <span className="text-xs uppercase tracking-widest text-[var(--color-muted)] font-mono">Assigned Role</span>
-          <span className="px-3 py-1 bg-[var(--color-primary)]/20 text-[var(--color-primary)] border border-[var(--color-primary)]/30 rounded-full font-bold text-sm shadow-[0_0_10px_var(--color-primary)]">
-            Lead Engineer
-          </span>
-        </div>
       </div>
     );
   }

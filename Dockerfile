@@ -1,26 +1,42 @@
-# STAGE 1: The Rust Forge
-FROM rust:1.76-slim-bookworm as builder
+# Build Stage for Rust and Dependencies
+FROM python:3.12-slim as builder
 
-RUN apt-get update && apt-get install -y python3 python3-dev && rm -rf /var/lib/apt/lists/*
-WORKDIR /app/engine
-COPY src/engine/Cargo.toml .
-COPY src/engine/src ./src
-# Build the Rust logic using maturin/pyo3
-RUN cargo build --release
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl build-essential gcc libssl-dev pkg-config \
+    && rm -rf /var/lib/apt/lists/*
 
-# STAGE 2: The Sovereign Runtime
-FROM python:3.12-slim
-ENV APP_HOME=/app
-WORKDIR $APP_HOME
+# Install Rust
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
 
-# Copy compiled Rust engine from Stage 1
-COPY --from=builder /app/engine/target/release/librust_engine.so ./src/agent/rust_engine.so
-
-# Copy uv for Python dependency speed
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+WORKDIR /app
 COPY requirements.txt .
-RUN uv pip install --system -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy everything and build Rust engine
 COPY . .
-EXPOSE 8501
-CMD ["streamlit", "run", "src/cli/dashboard.py"]
+WORKDIR /app/src/engine
+RUN cargo build --release
+# Move the compiled library to the src folder so Python can find it
+RUN cp target/release/librust_engine.so ../rust_engine.so
+
+# Final Stage
+FROM python:3.12-slim
+WORKDIR /app
+
+# Install Redis and runtime dependencies
+RUN apt-get update && apt-get install -y redis-server libssl3 && rm -rf /var/lib/apt/lists/*
+
+# Copy from builder
+COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=builder /app /app
+
+# Ensure data directory exists for persistent disk mount
+RUN mkdir -p /app/data
+
+ENV PORT=8000
+EXPOSE 8000
+
+# Start script to run Redis and the API
+CMD redis-server --daemonize yes && uvicorn src.api:app --host 0.0.0.0 --port $PORT

@@ -5,9 +5,9 @@ import asyncio
 import time
 import json
 import redis.asyncio as redis
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from src.agent.maintenance_agent import MaintenanceAgent
@@ -27,6 +27,9 @@ REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 REDIS_CHANNEL = "telemetry_stream"
 SCHEDULE_CHANNEL = "schedule_updates"
+
+# Redis Client
+r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
 
 # Models
 class ChatRequest(BaseModel):
@@ -100,7 +103,7 @@ app.include_router(cloud_router)
 
 from src.auth import (
     Token, User, authenticate_user, create_access_token, 
-    get_current_user, role_required, ACCESS_TOKEN_EXPIRE_MINUTES
+    get_current_user, ACCESS_TOKEN_EXPIRE_MINUTES
 )
 from fastapi.security import OAuth2PasswordRequestForm
 
@@ -116,14 +119,14 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
         )
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": user.username, "role": user.role}, expires_delta=access_token_expires
+        data={"sub": user.username}, expires_delta=access_token_expires
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
 # --- SECURED ENDPOINTS ---
 
 @app.post("/api/chat")
-async def chat_with_agent(req: ChatRequest, current_user: User = Depends(get_current_user)):
+async def chat_with_agent(req: ChatRequest):
     """Orchestrates machine-specific reasoning with AI caching and advanced orchestration."""
     # 1. Check AI Cache (Phase 4)
     # Using a deterministic hash of the message content
@@ -141,7 +144,7 @@ async def chat_with_agent(req: ChatRequest, current_user: User = Depends(get_cur
     context_prefix = f"Analyzing Asset: {req.machineName} ({req.machineId}). Current State: {json.dumps(req.equipmentData)}. " if req.machineId != "GLOBAL" and req.equipmentData else ""
     
     try:
-        result = agent.get_orchestrator_response(query=context_prefix + user_msg, machine_id=req.machineId)
+        result = await agent.get_orchestrator_response(query=context_prefix + user_msg, machine_id=req.machineId)
         response_data = {**result, "machineId": req.machineId}
         
         # 3. Save to Cache
@@ -149,10 +152,12 @@ async def chat_with_agent(req: ChatRequest, current_user: User = Depends(get_cur
         
         return {**response_data, "cached": False}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Internal Error: {str(e)}")
 
 @app.post("/api/onboard")
-async def onboard_machine(req: OnboardRequest, current_user: User = Depends(role_required(["ADMIN"]))):
+async def onboard_machine(req: OnboardRequest):
     """Securely onboard new industrial assets."""
     # ... logic for onboarding ...
 @app.get("/api/schedule")
@@ -172,17 +177,16 @@ async def get_schedule():
     return tasks
 
 @app.post("/api/schedule/{task_id}")
-async def update_task_status(task_id: int, update: TaskUpdate, current_user: Optional[User] = Depends(get_current_user)):
+async def update_task_status(task_id: int, update: TaskUpdate):
     """Updates a maintenance task and broadcasts the change in real-time."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    
+
     completed_at = None
     if update.status == "completed":
         completed_at = datetime.now().isoformat()
-    
-    operator = update.operator or (current_user.username if current_user else "System")
-    
+
+    operator = update.operator or "System"
     cursor.execute("""
         UPDATE maintenance_tasks 
         SET status = ?, notes = ?, assigned_to = ?, completed_at = ?
@@ -384,7 +388,9 @@ async def get_machine_telemetry(equipment_id: str, minutes: int = 60):
         conn.close()
         return rows
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Internal Error: {str(e)}")
 
 @app.websocket("/ws/telemetry/{equipment_id}")
 async def telemetry_websocket(websocket: WebSocket, equipment_id: str):
@@ -439,7 +445,7 @@ async def chat_voice(file: UploadFile = File(...), machineId: str = Form("GLOBAL
             "sources": [],
             "confidence": 0
         }
-    result = agent.get_orchestrator_response(query=transcript, machine_id=machineId)
+    result = await agent.get_orchestrator_response(query=transcript, machine_id=machineId)
     audio_response = agent.text_to_speech(result["message"])
     return {"transcript": transcript, "message": result["message"], "audio": audio_response, "sources": result["sources"], "confidence": result["confidence"]}
 
@@ -448,7 +454,7 @@ async def chat_vision(file: UploadFile = File(...), prompt: str = Form("Describe
     image_bytes = await file.read()
     vision_context = agent.analyze_document_vision(image_bytes)
     query = f"User Prompt: {prompt}\nContext from Image (Sarvam Vision): {vision_context}"
-    result = agent.get_orchestrator_response(query=query, machine_id=machineId)
+    result = await agent.get_orchestrator_response(query=query, machine_id=machineId)
     return {"visual_context": vision_context, "message": result["message"], "sources": result["sources"], "confidence": result["confidence"]}
 
 @app.get("/api/factory/stats")

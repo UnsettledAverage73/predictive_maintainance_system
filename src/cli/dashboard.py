@@ -8,10 +8,9 @@ import os
 
 # --- ENTERPRISE GOVERNANCE: AUTHENTICATION ---
 # In a real enterprise app, use a proper Auth provider or hashed DB.
-# For Level 7 Prototype, we use a simple RBAC system.
 CREDENTIALS = {
-    "admin": {"password": "admin123", "role": "Plant Manager"},
-    "op1": {"password": "operator123", "role": "Operator"}
+    "admin": {"password": "admin123"},
+    "op1": {"password": "operator123"}
 }
 
 def login():
@@ -22,8 +21,7 @@ def login():
         if user in CREDENTIALS and CREDENTIALS[user]["password"] == pwd:
             st.session_state["authenticated"] = True
             st.session_state["user"] = user
-            st.session_state["role"] = CREDENTIALS[user]["role"]
-            st.sidebar.success(f"Logged in as {st.session_state['role']}")
+            st.sidebar.success(f"Logged in as {user}")
         else:
             st.sidebar.error("Invalid credentials")
 
@@ -45,11 +43,10 @@ if "authenticated" not in st.session_state or not st.session_state["authenticate
 
 # User is authenticated
 st.sidebar.write(f"Logged in: **{st.session_state['user']}**")
-st.sidebar.write(f"Role: **{st.session_state['role']}**")
 logout()
 
 st.title("🏭 Sovereign Predictive Maintenance Dashboard")
-st.subheader(f"Industrial Command Center | {st.session_state['role']} View")
+st.subheader(f"Industrial Command Center View")
 
 refresh_rate = st.sidebar.slider("Refresh Rate (seconds)", 2, 30, 5)
 
@@ -66,21 +63,14 @@ while True:
     sensors, alerts = load_data()
     
     with placeholder.container():
-        # RBAC MASKING: Only Managers see "Critical Alert Count" and "System Health %"
+        # Unified View for all users
         m1, m2, m3 = st.columns(3)
         with m1:
             st.metric("Active Assets", "4")
-        
-        if st.session_state["role"] == "Plant Manager":
-            with m2:
-                st.metric("Critical Alerts (24h)", len(alerts))
-            with m3:
-                st.metric("System Health", "92%", "-2%")
-        else:
-            with m2:
-                st.metric("Alert Status", "MONITORED")
-            with m3:
-                st.metric("Shift Status", "ONGOING")
+        with m2:
+            st.metric("Critical Alerts (24h)", len(alerts))
+        with m3:
+            st.metric("System Health", "92%", "-2%")
 
         # Sensor Visualizations (Shared Access)
         st.write("### Live Telemetry Stream")
@@ -94,18 +84,15 @@ while True:
                 fig_vib = px.line(sensors, x='timestamp', y='vibration', color='equipment_id', title="Vibration Analysis (mm/s)")
                 st.plotly_chart(fig_vib, use_container_width=True)
 
-        # AI STRATEGIC LAYER: RBAC PROTECTION
+        # AI STRATEGIC LAYER
         st.write("### 🧠 AI Strategic Prescriptions")
-        if st.session_state["role"] == "Plant Manager":
-            if not alerts.empty:
-                for _, row in alerts.iterrows():
-                    with st.expander(f"🔴 ALERT: {row['equipment_id']} - {row['severity']}"):
-                        st.write(f"**Root Cause Analysis (RAG):** {row['reason']}")
-                        st.markdown(f"**Prescribed Action:**\n{row['prescription']}")
-            else:
-                st.info("System operating within normal parameters.")
+        if not alerts.empty:
+            for _, row in alerts.iterrows():
+                with st.expander(f"🔴 ALERT: {row['equipment_id']} - {row['severity']}"):
+                    st.write(f"**Root Cause Analysis (RAG):** {row['reason']}")
+                    st.markdown(f"**Prescribed Action:**\n{row['prescription']}")
         else:
-            st.warning("🔒 Managerial approval required to view strategic AI prescriptions.")
+            st.info("System operating within normal parameters.")
 
         # Raw Logs (Shared for debugging)
         st.write("### Factory Operations Feed")

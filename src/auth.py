@@ -21,11 +21,9 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     username: Optional[str] = None
-    role: Optional[str] = None
 
 class User(BaseModel):
     username: str
-    role: str # "ADMIN", "OPERATOR", "VIEWER"
 
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
@@ -52,34 +50,23 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
-        role: str = payload.get("role")
         if username is None:
             raise credentials_exception
-        token_data = TokenData(username=username, role=role)
+        token_data = TokenData(username=username)
     except JWTError:
         raise credentials_exception
-    return User(username=token_data.username, role=token_data.role)
+    return User(username=token_data.username)
 
 def authenticate_user(username, password):
     # In a real app, you'd fetch from a database. 
     # For this system, we use hardcoded credentials for demo.
     users_db = {
-        "admin": {"username": "admin", "password_hash": get_password_hash("admin123"), "role": "ADMIN"},
-        "operator": {"username": "operator", "password_hash": get_password_hash("op123"), "role": "OPERATOR"},
+        "admin": {"username": "admin", "password_hash": get_password_hash("admin123")},
+        "operator": {"username": "operator", "password_hash": get_password_hash("op123")},
     }
     user_dict = users_db.get(username)
     if not user_dict:
         return None
     if not verify_password(password, user_dict["password_hash"]):
         return None
-    return User(username=user_dict["username"], role=user_dict["role"])
-
-def role_required(allowed_roles: List[str]):
-    async def role_checker(current_user: User = Depends(get_current_user)):
-        if current_user.role not in allowed_roles:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not enough permissions"
-            )
-        return current_user
-    return role_checker
+    return User(username=user_dict["username"])

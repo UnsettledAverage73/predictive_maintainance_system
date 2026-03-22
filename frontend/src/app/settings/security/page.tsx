@@ -31,10 +31,10 @@ export default function SecurityCentrePage() {
   const [confirmModal, setConfirmModal] = useState<{ isOpen: boolean; phrase: string; action: string; onConfirm: () => void } | null>(null);
 
   const tabs = [
-    { id: 'auth', label: 'Authentication', roles: ['Admin'] },
-    { id: 'sessions', label: 'Sessions', roles: ['Admin', 'Engineer'] },
-    { id: 'keys', label: 'API Keys', roles: ['Admin', 'Engineer'] },
-    { id: 'audit', label: 'Audit Log', roles: ['Admin'] },
+    { id: 'auth', label: 'Authentication' },
+    { id: 'sessions', label: 'Sessions' },
+    { id: 'keys', label: 'API Keys' },
+    { id: 'audit', label: 'Audit Log' },
   ];
 
   const handleRevokeSession = (id: string) => {
@@ -72,192 +72,183 @@ export default function SecurityCentrePage() {
 
       <div className="flex space-x-1 border-b border-[var(--color-border)] overflow-x-auto pb-1 mb-6">
         {tabs.map(tab => (
-          <RBACGate key={tab.id} allowedRoles={tab.roles}>
-            <button
-              onClick={() => setActiveTab(tab.id)}
-              className={`px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors border-b-2 ${
-                activeTab === tab.id
-                  ? 'border-[var(--color-primary)] text-[var(--color-primary)]'
-                  : 'border-transparent text-[var(--color-muted)] hover:text-[var(--color-foreground)] hover:bg-[var(--color-surface)] rounded-t'
-              }`}
-            >
-              {tab.label}
-            </button>
-          </RBACGate>
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors border-b-2 ${
+              activeTab === tab.id
+                ? 'border-[var(--color-primary)] text-[var(--color-primary)]'
+                : 'border-transparent text-[var(--color-muted)] hover:text-[var(--color-foreground)] hover:bg-[var(--color-surface)] rounded-t'
+            }`}
+          >
+            {tab.label}
+          </button>
         ))}
       </div>
 
       <div className="min-h-[400px]">
         {activeTab === 'auth' && (
-          <RBACGate allowedRoles={['Admin']}>
-            <div className="space-y-6">
-              <div className="p-6 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)]">
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <h3 className="text-lg font-semibold">Multi-Factor Authentication (MFA)</h3>
-                    <p className="text-sm text-[var(--color-muted)]">Require physical token or authenticator app for login.</p>
-                  </div>
-                  <SecurityBadge status="secure" />
+          <div className="space-y-6">
+            <div className="p-6 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)]">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="text-lg font-semibold">Multi-Factor Authentication (MFA)</h3>
+                  <p className="text-sm text-[var(--color-muted)]">Require physical token or authenticator app for login.</p>
                 </div>
-                <div className="flex space-x-4 border-t border-[var(--color-border)] pt-4">
-                  <button className="px-4 py-2 bg-[var(--color-primary)] text-black font-semibold rounded hover:brightness-110 transition-all">Enable MFA</button>
-                  <button className="px-4 py-2 bg-slate-800 text-[var(--color-foreground)] border border-slate-700 rounded hover:bg-slate-700 transition-colors">Download Backup Codes</button>
-                </div>
+                <SecurityBadge status="secure" />
               </div>
+              <div className="flex space-x-4 border-t border-[var(--color-border)] pt-4">
+                <button className="px-4 py-2 bg-[var(--color-primary)] text-black font-semibold rounded hover:brightness-110 transition-all">Enable MFA</button>
+                <button className="px-4 py-2 bg-slate-800 text-[var(--color-foreground)] border border-slate-700 rounded hover:bg-slate-700 transition-colors">Download Backup Codes</button>
+              </div>
+            </div>
 
-              <div className="p-6 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)]">
-                <h3 className="text-lg font-semibold mb-2">Password Policy</h3>
-                <div className="space-y-4 max-w-md">
-                  <div>
-                    <label className="block text-sm text-[var(--color-muted)] mb-1">Minimum Length (12)</label>
-                    <input type="range" min="8" max="32" defaultValue="12" className="w-full accent-[var(--color-primary)]" />
-                  </div>
-                  <div className="flex items-center justify-between p-3 rounded bg-[var(--color-card)] border border-[var(--color-border)]">
-                    <span className="text-sm">Require Special Characters</span>
-                    <input type="checkbox" defaultChecked className="w-4 h-4 accent-[var(--color-primary)]" />
-                  </div>
-                  <div className="flex items-center justify-between p-3 rounded bg-[var(--color-card)] border border-[var(--color-border)]">
-                    <span className="text-sm">Breach Detection (HaveIBeenPwned)</span>
-                    <input type="checkbox" defaultChecked className="w-4 h-4 accent-[var(--color-primary)]" />
-                  </div>
+            <div className="p-6 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)]">
+              <h3 className="text-lg font-semibold mb-2">Password Policy</h3>
+              <div className="space-y-4 max-w-md">
+                <div>
+                  <label className="block text-sm text-[var(--color-muted)] mb-1">Minimum Length (12)</label>
+                  <input type="range" min="8" max="32" defaultValue="12" className="w-full accent-[var(--color-primary)]" />
                 </div>
-              </div>
-              
-              <div className="p-6 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)]">
-                <h3 className="text-lg font-semibold mb-2">Session Policy</h3>
-                <div className="space-y-4 max-w-md">
-                  <div>
-                    <label className="block text-sm text-[var(--color-muted)] mb-1">Access Token Lifetime (15 mins)</label>
-                    <input type="range" min="5" max="60" defaultValue="15" className="w-full accent-[var(--color-primary)]" />
-                  </div>
+                <div className="flex items-center justify-between p-3 rounded bg-[var(--color-card)] border border-[var(--color-border)]">
+                  <span className="text-sm">Require Special Characters</span>
+                  <input type="checkbox" defaultChecked className="w-4 h-4 accent-[var(--color-primary)]" />
+                </div>
+                <div className="flex items-center justify-between p-3 rounded bg-[var(--color-card)] border border-[var(--color-border)]">
+                  <span className="text-sm">Breach Detection (HaveIBeenPwned)</span>
+                  <input type="checkbox" defaultChecked className="w-4 h-4 accent-[var(--color-primary)]" />
                 </div>
               </div>
             </div>
-          </RBACGate>
+            
+            <div className="p-6 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)]">
+              <h3 className="text-lg font-semibold mb-2">Session Policy</h3>
+              <div className="space-y-4 max-w-md">
+                <div>
+                  <label className="block text-sm text-[var(--color-muted)] mb-1">Access Token Lifetime (15 mins)</label>
+                  <input type="range" min="5" max="60" defaultValue="15" className="w-full accent-[var(--color-primary)]" />
+                </div>
+              </div>
+            </div>
+          </div>
         )}
 
         {activeTab === 'sessions' && (
-          <RBACGate allowedRoles={['Admin', 'Engineer']}>
-            <div className="space-y-4">
-              <div className="flex justify-between items-center mb-6">
-                <div>
-                  <h2 className="text-lg font-semibold">Active Sessions</h2>
-                  <p className="text-sm text-[var(--color-muted)]">Manage your logged-in devices across the platform.</p>
-                </div>
-                <button 
-                  onClick={openRevokeAllConfirm}
-                  className="px-4 py-2 bg-red-900/30 text-[var(--color-destructive)] border border-red-900/50 rounded hover:bg-red-900/50 transition-colors text-sm"
-                >
-                  Revoke All Other Sessions
-                </button>
+          <div className="space-y-4">
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <h2 className="text-lg font-semibold">Active Sessions</h2>
+                <p className="text-sm text-[var(--color-muted)]">Manage your logged-in devices across the platform.</p>
               </div>
-              
-              <div className="grid gap-3">
-                {sessions.map(s => (
-                  <SessionCard key={s.id} session={s} onRevoke={handleRevokeSession} />
-                ))}
-                {sessions.length === 0 && (
-                  <div className="p-8 text-center text-[var(--color-muted)] border border-[var(--color-border)] rounded-lg border-dashed">
-                    No active sessions found.
-                  </div>
-                )}
-              </div>
+              <button 
+                onClick={openRevokeAllConfirm}
+                className="px-4 py-2 bg-red-900/30 text-[var(--color-destructive)] border border-red-900/50 rounded hover:bg-red-900/50 transition-colors text-sm"
+              >
+                Revoke All Other Sessions
+              </button>
             </div>
-          </RBACGate>
+            
+            <div className="grid gap-3">
+              {sessions.map(s => (
+                <SessionCard key={s.id} session={s} onRevoke={handleRevokeSession} />
+              ))}
+              {sessions.length === 0 && (
+                <div className="p-8 text-center text-[var(--color-muted)] border border-[var(--color-border)] rounded-lg border-dashed">
+                  No active sessions found.
+                </div>
+              )}
+            </div>
+          </div>
         )}
 
         {activeTab === 'keys' && (
-          <RBACGate allowedRoles={['Admin', 'Engineer']}>
-            <div className="space-y-6">
-              <div className="flex justify-between items-center">
-                <div>
-                  <h2 className="text-lg font-semibold">API Keys</h2>
-                  <p className="text-sm text-[var(--color-muted)]">Tokens for programmatic access to PredictMaint API.</p>
-                </div>
-                <button 
-                  onClick={generateKey}
-                  className="px-4 py-2 bg-[var(--color-primary)] text-black font-semibold rounded hover:brightness-110 transition-all text-sm"
-                >
-                  Generate New Key
-                </button>
+          <div className="space-y-6">
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-lg font-semibold">API Keys</h2>
+                <p className="text-sm text-[var(--color-muted)]">Tokens for programmatic access to PredictMaint API.</p>
               </div>
-
-              {newKey && <APIKeyReveal apiKey={newKey} />}
-
-              <div className="overflow-hidden border border-[var(--color-border)] rounded-lg">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-[var(--color-surface)] border-b border-[var(--color-border)] text-[var(--color-muted)]">
-                    <tr>
-                      <th className="p-4 font-medium">Name</th>
-                      <th className="p-4 font-medium">Created</th>
-                      <th className="p-4 font-medium">Last Used</th>
-                      <th className="p-4 font-medium">Expires</th>
-                      <th className="p-4 font-medium">Scope</th>
-                      <th className="p-4 font-medium text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[var(--color-border)]">
-                    {keys.map(k => (
-                      <tr key={k.id} className="hover:bg-[var(--color-surface)]/50 transition-colors">
-                        <td className="p-4 font-medium">{k.name}</td>
-                        <td className="p-4 text-[var(--color-muted)]">{k.created}</td>
-                        <td className="p-4 text-[var(--color-muted)]">{k.lastUsed}</td>
-                        <td className="p-4 text-[var(--color-muted)]">{k.expires}</td>
-                        <td className="p-4">
-                          <span className="px-2 py-1 bg-slate-800 text-slate-300 rounded border border-slate-700 text-xs">{k.scope}</span>
-                        </td>
-                        <td className="p-4 text-right">
-                          <button onClick={() => handleRevokeKey(k.id)} className="text-[var(--color-destructive)] hover:underline text-xs">Revoke</button>
-                        </td>
-                      </tr>
-                    ))}
-                    {keys.length === 0 && (
-                      <tr>
-                        <td colSpan={6} className="p-8 text-center text-[var(--color-muted)]">No API keys generated yet.</td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+              <button 
+                onClick={generateKey}
+                className="px-4 py-2 bg-[var(--color-primary)] text-black font-semibold rounded hover:brightness-110 transition-all text-sm"
+              >
+                Generate New Key
+              </button>
             </div>
-          </RBACGate>
+
+            {newKey && <APIKeyReveal apiKey={newKey} />}
+
+            <div className="overflow-hidden border border-[var(--color-border)] rounded-lg">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-[var(--color-surface)] border-b border-[var(--color-border)] text-[var(--color-muted)]">
+                  <tr>
+                    <th className="p-4 font-medium">Name</th>
+                    <th className="p-4 font-medium">Created</th>
+                    <th className="p-4 font-medium">Last Used</th>
+                    <th className="p-4 font-medium">Expires</th>
+                    <th className="p-4 font-medium">Scope</th>
+                    <th className="p-4 font-medium text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--color-border)]">
+                  {keys.map(k => (
+                    <tr key={k.id} className="hover:bg-[var(--color-surface)]/50 transition-colors">
+                      <td className="p-4 font-medium">{k.name}</td>
+                      <td className="p-4 text-[var(--color-muted)]">{k.created}</td>
+                      <td className="p-4 text-[var(--color-muted)]">{k.lastUsed}</td>
+                      <td className="p-4 text-[var(--color-muted)]">{k.expires}</td>
+                      <td className="p-4">
+                        <span className="px-2 py-1 bg-slate-800 text-slate-300 rounded border border-slate-700 text-xs">{k.scope}</span>
+                      </td>
+                      <td className="p-4 text-right">
+                        <button onClick={() => handleRevokeKey(k.id)} className="text-[var(--color-destructive)] hover:underline text-xs">Revoke</button>
+                      </td>
+                    </tr>
+                  ))}
+                  {keys.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="p-8 text-center text-[var(--color-muted)]">No API keys generated yet.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         )}
 
         {activeTab === 'audit' && (
-          <RBACGate allowedRoles={['Admin']}>
-            <div className="space-y-4">
-              <div className="flex justify-between items-center mb-4">
-                <h2 className="text-lg font-semibold">Security Audit Log</h2>
-                <button className="px-3 py-1.5 border border-[var(--color-border)] rounded text-sm hover:bg-[var(--color-surface)] transition-colors">Export CSV</button>
-              </div>
-              <div className="overflow-hidden border border-[var(--color-border)] rounded-lg">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-[var(--color-surface)] border-b border-[var(--color-border)] text-[var(--color-muted)]">
-                    <tr>
-                      <th className="p-4 font-medium">Timestamp</th>
-                      <th className="p-4 font-medium">User</th>
-                      <th className="p-4 font-medium">Event Type</th>
-                      <th className="p-4 font-medium">Details</th>
-                      <th className="p-4 font-medium">IP Address</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[var(--color-border)]">
-                    {MOCK_AUDIT.map(a => (
-                      <tr key={a.id} className="hover:bg-[var(--color-surface)]/50">
-                        <td className="p-4 text-[var(--color-muted)] whitespace-nowrap">{a.time}</td>
-                        <td className="p-4 font-medium">{a.user}</td>
-                        <td className="p-4">
-                          <span className={`px-2 py-1 rounded text-xs border ${a.color}`}>{a.type}</span>
-                        </td>
-                        <td className="p-4 text-[var(--color-muted)] max-w-xs truncate">{a.details}</td>
-                        <td className="p-4 font-mono text-xs text-[var(--color-muted)]">{a.ip}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+          <div className="space-y-4">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-lg font-semibold">Security Audit Log</h2>
+              <button className="px-3 py-1.5 border border-[var(--color-border)] rounded text-sm hover:bg-[var(--color-surface)] transition-colors">Export CSV</button>
             </div>
-          </RBACGate>
+            <div className="overflow-hidden border border-[var(--color-border)] rounded-lg">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-[var(--color-surface)] border-b border-[var(--color-border)] text-[var(--color-muted)]">
+                  <tr>
+                    <th className="p-4 font-medium">Timestamp</th>
+                    <th className="p-4 font-medium">User</th>
+                    <th className="p-4 font-medium">Event Type</th>
+                    <th className="p-4 font-medium">Details</th>
+                    <th className="p-4 font-medium">IP Address</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--color-border)]">
+                  {MOCK_AUDIT.map(a => (
+                    <tr key={a.id} className="hover:bg-[var(--color-surface)]/50">
+                      <td className="p-4 text-[var(--color-muted)] whitespace-nowrap">{a.time}</td>
+                      <td className="p-4 font-medium">{a.user}</td>
+                      <td className="p-4">
+                        <span className={`px-2 py-1 rounded text-xs border ${a.color}`}>{a.type}</span>
+                      </td>
+                      <td className="p-4 text-[var(--color-muted)] max-w-xs truncate">{a.details}</td>
+                      <td className="p-4 font-mono text-xs text-[var(--color-muted)]">{a.ip}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         )}
       </div>
 

@@ -1,0 +1,37 @@
+services:
+  # --- BACKEND (Python/Rust Hybrid + Redis) ---
+  - type: web
+    name: predictive-maint-backend
+    env: docker
+    plan: free
+    region: oregon
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: PINECONE_API_KEY
+        sync: false
+      - key: SARVAM_API_KEY
+        sync: false
+      - key: REDIS_HOST
+        value: localhost
+      - key: OLLAMA_URL
+        value: http://localhost:11434/api
+    disk:
+      name: factory-data
+      mountPath: /app/data
+      sizeGB: 1
+
+  # --- FRONTEND (Next.js) ---
+  - type: web
+    name: predictive-maint-frontend
+    env: node
+    plan: free
+    region: oregon
+    buildCommand: cd frontend && npm install && npm run build
+    startCommand: cd frontend && npm start
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        fromService:
+          type: web
+          name: predictive-maint-backend
+          property: host
