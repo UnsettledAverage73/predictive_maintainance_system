@@ -2,92 +2,117 @@ import json
 import time
 import random
 import os
+import sqlite3
 
 # --- CONFIGURATION: SOVEREIGN IPC ---
 IPC_FILE = os.path.join("data", "iot_stream.json")
 COMMAND_FILE = os.path.join("data", "commands.json")
-EQUIPMENT_IDS = ["CNC001", "CONV01", "HYD005", "EXT002"]
+DB_PATH = "data/factory_ops.db"
+
+def get_equipment_parameters():
+    """Fetches all parameters for all equipment from the database."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT id, name FROM equipment")
+    equipment = [dict(row) for row in cursor.fetchall()]
+    
+    config = {}
+    for eq in equipment:
+        cursor.execute("SELECT * FROM machine_parameters WHERE machine_id = ?", (eq['id'],))
+        params = [dict(row) for row in cursor.fetchall()]
+        config[eq['id']] = {
+            "name": eq['name'],
+            "parameters": params
+        }
+    
+    conn.close()
+    return config
 
 def simulate_sensors():
     os.makedirs("data", exist_ok=True)
-    print(f"--- [SOVEREIGN] IoT Simulator Online (Mode: FULL CLOSED-LOOP) ---")
+    print(f"--- [SOVEREIGN] Universal IoT Simulator Online (Mode: MULTI-PARAMETER) ---")
 
     # Initial Machine Load (1.0 = 100% capacity)
-    load_factors = {eq_id: 1.0 for eq_id in EQUIPMENT_IDS}
-
+    load_factors = {}
+    
     try:
         while True:
-            # --- 1. COMMAND INTERCEPTOR (ACTUATION LAYER) ---
+            # 1. Refresh config periodically to pick up new onboarded machines
+            config = get_equipment_parameters()
+            for eq_id in config:
+                if eq_id not in load_factors:
+                    load_factors[eq_id] = 1.0
+
+            # 2. COMMAND INTERCEPTOR
             if os.path.exists(COMMAND_FILE):
                 try:
                     with open(COMMAND_FILE, "r") as f:
                         cmd = json.load(f)
-                    
                     target = cmd.get("equipment_id")
-                    action = cmd.get("action")
-                    
                     if target in load_factors:
-                        if action == "THROTTLE_LOAD":
-                            new_load = cmd.get("value", 0.5)
-                            load_factors[target] = new_load
-                            print(f"!!! [AUTO-MITIGATION] Throttling {target} to {new_load*100}% load !!!")
-                        
-                        elif action == "RESET_LOAD":
+                        if cmd.get("action") == "THROTTLE_LOAD":
+                            load_factors[target] = cmd.get("value", 0.5)
+                            print(f"!!! [AUTO-MITIGATION] Throttling {target} !!!")
+                        elif cmd.get("action") == "RESET_LOAD":
                             load_factors[target] = 1.0
-                            print(f"✅ [HUMAN-RECOVERY] {target} restored to 100% load by Operator.")
-                    
-                    # Command consumed by the hardware
+                            print(f"✅ [RECOVERY] {target} restored.")
                     os.remove(COMMAND_FILE)
-                except (json.JSONDecodeError, IOError):
-                    pass
+                except: pass
 
             readings = []
-            for eq_id in EQUIPMENT_IDS:
-                current_load = load_factors[eq_id]
-
-                # --- 2. SENSOR GENERATION (TELEMETRY LAYER) ---
-                # Thermodynamics: Base metrics scale with load
-                base_temp = 60.0 + (current_load * 35.0)  
-                base_vib = 0.5 + (current_load * 4.0)
-
-                # Stochastic jitter
-                temp = base_temp + random.uniform(0, 8.0)
-                vibration = base_vib + random.uniform(0, 0.8)
-
-                # --- 3. ANOMALY & RECOVERY LOGIC ---
-                # Anomalies only occur during high-load stress
-                if current_load > 0.8 and random.random() < 0.10:
-                    temp += random.uniform(30.0, 50.0)
-                    vibration += random.uniform(4.0, 8.0)
+            for eq_id, eq_data in config.items():
+                current_load = load_factors.get(eq_id, 1.0)
                 
-                # Cooling curve simulation when throttled
-                if current_load < 1.0:
-                     temp -= random.uniform(3.0, 6.0)
-                     vibration = max(0.5, vibration - 2.0)
-
-                payload = {
+                # Base reading for this machine
+                machine_payload = {
                     "equipment_id": eq_id,
                     "timestamp": time.time(),
-                    "temperature": round(max(35.0, temp), 2),
-                    "vibration": round(max(0.1, vibration), 2),
-                    "load_factor": current_load 
+                    "load_factor": current_load,
+                    "parameters": {}
                 }
-                readings.append(payload)
 
-                if temp > 115 or vibration > 9:
-                    print(f"  [SIMULATOR ALERT] {eq_id} Critical: Temp {temp:.1f}C, Vib {vibration:.1f}")
+                # Simulate each parameter
+                for p in eq_data['parameters']:
+                    key = p['parameter_key']
+                    n_min = p['normal_min'] or 0
+                    n_max = p['normal_max'] or 100
+                    
+                    # Logic: Scale value by load factor within the normal range
+                    # Add some stochastic noise
+                    range_width = n_max - n_min
+                    base_val = n_min + (range_width * 0.7 * current_load) 
+                    
+                    # Random jitter
+                    jitter = random.uniform(-range_width * 0.05, range_width * 0.05)
+                    val = base_val + jitter
 
-            # --- 4. ATOMIC DATA DISPATCH ---
+                    # Injection of Anomaly
+                    if current_load > 0.8 and random.random() < 0.05:
+                        if p['direction'] == 'above':
+                            val += range_width * 0.4
+                        else:
+                            val -= range_width * 0.4
+
+                    # Specialized logic for temperature/vibration legacy fields
+                    if key == 'temperature': machine_payload['temperature'] = round(val, 2)
+                    if key == 'vibration_rms' or key == 'vibration': machine_payload['vibration'] = round(val, 2)
+
+                    machine_payload['parameters'][key] = round(val, 2)
+
+                readings.append(machine_payload)
+
+            # 3. ATOMIC DATA DISPATCH
             temp_path = IPC_FILE + ".tmp"
             with open(temp_path, "w") as f:
                 json.dump(readings, f)
             os.replace(temp_path, IPC_FILE)
 
-            time.sleep(1)
+            time.sleep(2)
 
     except KeyboardInterrupt:
         print("\n[!] Simulator shutting down...")
 
 if __name__ == "__main__":
     simulate_sensors()
-

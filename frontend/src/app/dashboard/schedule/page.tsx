@@ -1,10 +1,11 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { cn } from "@/lib/utils";
 import { TaskCard } from "@/components/schedule/TaskCard";
 import { MaintenanceTask } from "@/types";
-import { Filter, Calendar as CalendarIcon, Bot, Plus } from "lucide-react";
-import { api } from '@/lib/api';
+import { Filter, Calendar as CalendarIcon, Bot, Clock, AlertTriangle, Play, CheckCircle } from "lucide-react";
+import { api, buildWebSocketUrl } from '@/lib/api';
 
 export default function SchedulePage() {
   const [tasks, setTasks] = useState<MaintenanceTask[]>([]);
@@ -13,8 +14,9 @@ export default function SchedulePage() {
 
   useEffect(() => {
     const fetchSchedule = async () => {
+      setIsLoading(true);
       try {
-        const response = await api.getSchedule();
+        const response = await api.getSchedule(true);
         setTasks(response);
         setIsLoading(false);
       } catch (error) {
@@ -26,8 +28,7 @@ export default function SchedulePage() {
     fetchSchedule();
 
     // Real-time WebSocket Subscription
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.hostname}:8000/ws/schedule`;
+    const wsUrl = buildWebSocketUrl("/ws/schedule");
     const ws = new WebSocket(wsUrl);
 
     ws.onmessage = (event) => {
@@ -59,39 +60,86 @@ export default function SchedulePage() {
   const pendingTasks = tasks.filter(t => t.status === 'pending');
   const inProgressTasks = tasks.filter(t => t.status === 'in_progress');
   const completedTasks = tasks.filter(t => t.status === 'completed');
+  const criticalTasksCount = tasks.filter(t => t.priority === 'critical').length;
 
-  if (isLoading) {
-    return <div className="p-12 text-center font-mono text-[var(--color-muted)]">Computing Optimal Maintenance Trajectory...</div>;
+  if (isLoading && tasks.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
+        <div className="w-12 h-12 border-4 border-[var(--color-primary)]/20 border-t-[var(--color-primary)] rounded-full animate-spin" />
+        <div className="text-center font-mono text-[var(--color-muted)] animate-pulse">Computing Optimal Maintenance Trajectory...</div>
+      </div>
+    );
   }
 
   return (
-    <div className="flex flex-col gap-6 animate-in fade-in duration-500 pb-12 w-full">
+    <div className="flex flex-col gap-6 animate-in fade-in slide-in-from-bottom-4 duration-700 pb-12 w-full">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold border-l-4 border-[var(--color-primary)] pl-3 ml-[-4px]">Maintenance Schedule</h1>
-          <p className="text-[var(--color-muted)] text-sm mt-1 mb-2 md:mb-0">Manage active work orders and assign technicians</p>
+          <h1 className="text-3xl font-black tracking-tight text-white">Maintenance Schedule</h1>
+          <p className="text-[var(--color-muted)] text-sm mt-1">AI-prioritized work orders for maximum plant uptime</p>
         </div>
-        <div className="flex gap-3 overflow-x-auto pb-2 md:pb-0 custom-scrollbar snap-x">
-          <button className="snap-center shrink-0 flex items-center gap-2 bg-[var(--color-primary)]/20 text-[var(--color-primary)] border border-[var(--color-primary)]/50 px-4 py-2 rounded-lg text-sm font-bold shadow-[0_0_15px_var(--color-primary)]/20 hover:bg-[var(--color-primary)]/30 transition-all">
-            <Bot className="w-4 h-4" /> AI Generate Schedule
+        <div className="flex gap-3 items-center">
+          <button 
+            disabled={isLoading}
+            onClick={() => {
+              setIsLoading(true);
+              api.getSchedule(true)
+                .then(res => {
+                  setTasks(res);
+                  setIsLoading(false);
+                })
+                .catch(error => {
+                  console.error("Failed to refresh schedule:", error);
+                  setIsLoading(false);
+                });
+            }}
+            className={cn(
+              "flex items-center gap-2 bg-[var(--color-primary)] text-black px-5 py-2.5 rounded-xl text-sm font-bold shadow-[0_0_20px_rgba(0,212,170,0.3)] hover:scale-105 transition-all active:scale-95 disabled:opacity-50 disabled:hover:scale-100",
+              isLoading && "animate-pulse"
+            )}
+          >
+            {isLoading ? <Clock className="w-4 h-4 animate-spin" /> : <Bot className="w-4 h-4" />}
+            {isLoading ? "Analyzing..." : "AI Re-Prioritize"}
           </button>
-          <div className="snap-center shrink-0 flex bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-1">
-            <button className="px-3 py-1 rounded bg-[var(--color-border)]/50 text-sm font-medium">Board</button>
-            <button className="px-3 py-1 rounded hover:bg-[var(--color-border)]/50 transition-colors text-sm font-medium text-[var(--color-muted)]">List</button>
-          </div>
         </div>
       </div>
 
-      <div className="flex items-center gap-4 py-2 border-y border-[var(--color-border)] overflow-x-auto custom-scrollbar -mx-4 px-4 md:mx-0 md:px-0">
+      {/* Quick Stats Bar */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {[
+          { label: 'Total Tasks', value: tasks.length, icon: CalendarIcon, color: 'var(--color-primary)' },
+          { label: 'Critical Risk', value: criticalTasksCount, icon: AlertTriangle, color: 'var(--color-destructive)' },
+          { label: 'In Progress', value: inProgressTasks.length, icon: Play, color: 'var(--color-warning)' },
+          { label: 'Completed', value: completedTasks.length, icon: CheckCircle, color: 'var(--color-success)' },
+        ].map((stat) => (
+          <div key={stat.label} className="glass-panel p-4 rounded-2xl flex items-center gap-4 border-l-4" style={{ borderLeftColor: stat.color }}>
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-white/5 border border-white/10 shadow-inner">
+               <stat.icon className="w-5 h-5" style={{ color: stat.color }} />
+            </div>
+            <div>
+              <p className="text-[10px] uppercase font-bold text-[var(--color-muted)] tracking-widest">{stat.label}</p>
+              <p className="text-xl font-black text-white">{stat.value}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex items-center gap-4 py-3 border-y border-white/5 overflow-x-auto custom-scrollbar -mx-4 px-4 md:mx-0 md:px-0">
         <div className="flex items-center gap-2 whitespace-nowrap">
           <Filter className="w-4 h-4 text-[var(--color-muted)]" />
           <span className="text-sm font-semibold text-[var(--color-muted)] mr-2">Filters:</span>
         </div>
-        {["All Machines", "Critical Priority", "My Tasks", "Due This Week"].map(f => (
-          <span key={f} className="px-3 py-1.5 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-full text-xs font-mono font-medium whitespace-nowrap cursor-pointer hover:border-[var(--color-primary)]/50 transition-colors">
-            {f}
-          </span>
-        ))}
+        <div className="flex items-center gap-3">
+          {["All Assets", "Critical Only", "High Risk", "My Area"].map(f => (
+            <span key={f} className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-full text-[10px] font-mono font-bold uppercase tracking-wider whitespace-nowrap cursor-pointer hover:border-[var(--color-primary)]/50 transition-all hover:bg-[var(--color-primary)]/5 active:scale-95">
+              {f}
+            </span>
+          ))}
+        </div>
+        <div className="ml-auto snap-center shrink-0 flex bg-white/5 rounded-xl border border-white/10 p-1">
+          <button className="px-3 py-1 rounded-lg bg-white/10 text-[10px] font-bold uppercase tracking-wider shadow-sm">Board</button>
+          <button className="px-3 py-1 rounded-lg hover:bg-white/10 transition-colors text-[10px] font-bold uppercase tracking-wider text-[var(--color-muted)]">List</button>
+        </div>
       </div>
 
       {/* Mobile Tabs */}
@@ -120,40 +168,49 @@ export default function SchedulePage() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 relative min-h-[50vh]">
         
         <div className={activeTab === 'pending' ? 'flex flex-col gap-4' : 'hidden md:flex flex-col gap-4'}>
-          <div className="flex items-center justify-between bg-[var(--color-surface)] px-4 py-3 rounded-t-xl border-b-[3px] border-b-[#8B949E] shadow-sm">
-            <h3 className="font-bold text-sm uppercase tracking-widest text-[#8B949E]">Pending</h3>
-            <span className="bg-[#8B949E]/20 text-[#8B949E] px-2 py-0.5 rounded text-xs font-bold">{pendingTasks.length}</span>
+          <div className="flex items-center justify-between bg-white/5 px-4 py-4 rounded-2xl border border-white/10 shadow-sm mb-2 group">
+            <div className="flex items-center gap-3">
+              <div className="w-2 h-6 bg-[#8B949E] rounded-full group-hover:h-8 transition-all" />
+              <h3 className="font-black text-xs uppercase tracking-[0.2em] text-[#8B949E]">Queue</h3>
+            </div>
+            <span className="bg-[#8B949E]/10 text-[#8B949E] px-2.5 py-1 rounded-lg text-xs font-black border border-[#8B949E]/20">{pendingTasks.length}</span>
           </div>
-          <div className="flex flex-col gap-3 pb-4">
+          <div className="flex flex-col gap-4 pb-4">
             {pendingTasks.map((t) => <TaskCard key={t.id} task={t} onUpdate={onUpdateTask} />)}
             {pendingTasks.length === 0 && (
-               <div className="p-8 text-center text-[var(--color-muted)] text-sm font-medium border-2 border-dashed border-[var(--color-border)] rounded-xl">No pending tasks</div>
+               <div className="p-12 text-center text-[var(--color-muted)] text-sm font-bold border-2 border-dashed border-white/5 rounded-3xl opacity-50">Empty Queue</div>
             )}
           </div>
         </div>
 
         <div className={activeTab === 'in_progress' ? 'flex flex-col gap-4' : 'hidden md:flex flex-col gap-4'}>
-          <div className="flex items-center justify-between bg-[var(--color-surface)] px-4 py-3 rounded-t-xl border-b-[3px] border-b-[var(--color-warning)] shadow-sm">
-            <h3 className="font-bold text-sm uppercase tracking-widest text-[var(--color-warning)]">In Progress</h3>
-            <span className="bg-[var(--color-warning)]/20 text-[var(--color-warning)] px-2 py-0.5 rounded text-xs font-bold">{inProgressTasks.length}</span>
+          <div className="flex items-center justify-between bg-white/5 px-4 py-4 rounded-2xl border border-white/10 shadow-sm mb-2 group">
+            <div className="flex items-center gap-3">
+              <div className="w-2 h-6 bg-[var(--color-warning)] rounded-full group-hover:h-8 transition-all shadow-[0_0_10px_var(--color-warning)]" />
+              <h3 className="font-black text-xs uppercase tracking-[0.2em] text-[var(--color-warning)]">Active</h3>
+            </div>
+            <span className="bg-[var(--color-warning)]/10 text-[var(--color-warning)] px-2.5 py-1 rounded-lg text-xs font-black border border-[var(--color-warning)]/20">{inProgressTasks.length}</span>
           </div>
-          <div className="flex flex-col gap-3 pb-4">
+          <div className="flex flex-col gap-4 pb-4">
             {inProgressTasks.map((t) => <TaskCard key={t.id} task={t} onUpdate={onUpdateTask} />)}
             {inProgressTasks.length === 0 && (
-               <div className="p-8 text-center text-[var(--color-muted)] text-sm font-medium border-2 border-dashed border-[var(--color-border)] rounded-xl">No active tasks</div>
+               <div className="p-12 text-center text-[var(--color-muted)] text-sm font-bold border-2 border-dashed border-white/5 rounded-3xl opacity-50">No Active Operations</div>
             )}
           </div>
         </div>
 
         <div className={activeTab === 'completed' ? 'flex flex-col gap-4' : 'hidden md:flex flex-col gap-4'}>
-          <div className="flex items-center justify-between bg-[var(--color-surface)] px-4 py-3 rounded-t-xl border-b-[3px] border-b-[var(--color-success)] shadow-sm">
-            <h3 className="font-bold text-sm uppercase tracking-widest text-[var(--color-success)]">Completed</h3>
-            <span className="bg-[var(--color-success)]/20 text-[var(--color-success)] px-2 py-0.5 rounded text-xs font-bold">{completedTasks.length}</span>
+          <div className="flex items-center justify-between bg-white/5 px-4 py-4 rounded-2xl border border-white/10 shadow-sm mb-2 group">
+            <div className="flex items-center gap-3">
+              <div className="w-2 h-6 bg-[var(--color-success)] rounded-full group-hover:h-8 transition-all shadow-[0_0_10px_var(--color-success)]" />
+              <h3 className="font-black text-xs uppercase tracking-[0.2em] text-[var(--color-success)]">Resolved</h3>
+            </div>
+            <span className="bg-[var(--color-success)]/10 text-[var(--color-success)] px-2.5 py-1 rounded-lg text-xs font-black border border-[var(--color-success)]/20">{completedTasks.length}</span>
           </div>
-          <div className="flex flex-col gap-3 pb-4">
+          <div className="flex flex-col gap-4 pb-4">
             {completedTasks.map((t) => <TaskCard key={t.id} task={t} onUpdate={onUpdateTask} />)}
             {completedTasks.length === 0 && (
-               <div className="p-8 text-center text-[var(--color-muted)] text-sm font-medium border-2 border-dashed border-[var(--color-border)] rounded-xl">No completed tasks</div>
+               <div className="p-12 text-center text-[var(--color-muted)] text-sm font-bold border-2 border-dashed border-white/5 rounded-3xl opacity-50">Archive Empty</div>
             )}
           </div>
         </div>

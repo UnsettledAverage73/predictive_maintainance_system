@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { NLChatBubble } from "@/components/agents/NLChatBubble";
 import { ChatMessage } from "@/types";
 import { Bot, FileText, Send, Sparkles, AlertTriangle, Mic, Image as ImageIcon, StopCircle } from "lucide-react";
@@ -11,6 +11,7 @@ export default function QueryPage() {
   const searchParams = useSearchParams();
   const initialQ = searchParams.get("q");
   const machineId = searchParams.get("machineId");
+  const sessionId = useMemo(() => `sess-${Date.now()}`, []);
   const [activeSources, setActiveSources] = useState<any[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -51,7 +52,8 @@ export default function QueryPage() {
       const response = await api.chat({
         messages: [...messages, userMsg].map(m => ({ role: m.role, content: m.content })),
         machineId: machineId || "GLOBAL",
-        machineName: machineId ? `Asset ${machineId}` : "Factory Matrix"
+        machineName: machineId ? `Asset ${machineId}` : "Factory Matrix",
+        sessionId: sessionId
       });
 
       const assistantMsg: ChatMessage = {
@@ -115,6 +117,7 @@ export default function QueryPage() {
     const cleanMimeType = recordedMimeType.split(";")[0];
     formData.append("file", audioBlob, `voice-input.${extension}`);
     formData.append("machineId", machineId || "GLOBAL");
+    formData.append("sessionId", sessionId);
 
     setIsTyping(true);
     try {
@@ -153,9 +156,10 @@ export default function QueryPage() {
     if (!file) return;
 
     const formData = new FormData();
-    formData.append("file", file);
+    formData.append("files", file);
     formData.append("prompt", "Analyze this machine status");
     formData.append("machineId", machineId || "GLOBAL");
+    formData.append("sessionId", sessionId);
 
     setIsTyping(true);
     try {

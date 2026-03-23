@@ -20,6 +20,7 @@ This project implements a high-performance, Generative AI Agent for Predictive M
    TWILIO_ACCOUNT_SID=your_sid
    TWILIO_AUTH_TOKEN=your_token
    TWILIO_WHATSAPP_FROM=whatsapp:+14155238886
+   TWILIO_WHATSAPP_CONTENT_SID=HXxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
    ```
 2. **Launch Sovereign Stack:**
    ```bash
@@ -38,6 +39,8 @@ This project implements a high-performance, Generative AI Agent for Predictive M
    - Dashboard: `uv run streamlit run src/cli/dashboard.py`
 3. **Enable WhatsApp Escalation:**
    Set the recipient number from the alerts screen or in `data/config.json` as `whatsapp_number` with country code, for example `+919876543210`. Critical alerts are sent automatically when the ingestor logs a critical event.
+   For production delivery outside the active WhatsApp conversation window, configure an approved Twilio WhatsApp Content Template in `TWILIO_WHATSAPP_CONTENT_SID`.
+   The code sends four template variables in this order: `1=equipment_id`, `2=severity`, `3=reason`, `4=prescription`.
 
 ## 🏗️ System Architecture (Mermaid)
 

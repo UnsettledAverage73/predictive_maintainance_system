@@ -8,6 +8,15 @@ trap "kill 0" EXIT
 
 echo "--- [SOVEREIGN] Launching Local Backend Stack ---"
 
+# 0. Start Redis
+echo "[0/4] Starting Redis Server..."
+if ! pgrep -x "redis-server" > /dev/null; then
+    redis-server --daemonize yes
+    echo "Redis started."
+else
+    echo "Redis is already running."
+fi
+
 # 1. Start Simulator
 echo "[1/4] Starting IoT Simulator..."
 uv run python src/data/iot_simulator.py > data/simulator.log 2>&1 &

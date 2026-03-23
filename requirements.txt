@@ -22,5 +22,6 @@ asyncpg
 pytesseract
 pillow
 boto3
+pypdf
 # Local Development
 # ollama (handled via direct API)

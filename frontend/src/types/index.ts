@@ -19,10 +19,12 @@ export interface MaintenanceTask {
   task_name: string;
   task_type: 'routine' | 'repair' | 'inspection';
   status: 'pending' | 'in_progress' | 'completed' | 'overdue';
+  priority?: 'critical' | 'high' | 'medium' | 'low';
   due_date: string;
   assigned_to: string;
   completed_at?: string;
   notes?: string;
+  aiReason?: string;
   created_at: string;
 }
 

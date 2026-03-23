@@ -2,7 +2,12 @@ import json
 import os
 from typing import Optional
 
+from dotenv import load_dotenv
+
 CONFIG_FILE = "data/config.json"
+
+load_dotenv()
+
 TWILIO_SANDBOX_NUMBER = os.getenv("TWILIO_WHATSAPP_FROM", "whatsapp:+14155238886")
 
 
@@ -50,13 +55,30 @@ def send_whatsapp_alert(
         f"Reason: {reason}\n\n"
         f"AI Prescription:\n{prescription}\n"
     )
+    content_sid = os.getenv("TWILIO_WHATSAPP_CONTENT_SID", "").strip()
+    content_variables = json.dumps(
+        {
+            "1": equipment_id,
+            "2": severity,
+            "3": reason,
+            "4": prescription,
+        }
+    )
 
     try:
-        message = client.messages.create(
-            body=message_body,
-            from_=TWILIO_SANDBOX_NUMBER,
-            to=to_whatsapp,
-        )
+        if content_sid:
+            message = client.messages.create(
+                from_=TWILIO_SANDBOX_NUMBER,
+                to=to_whatsapp,
+                content_sid=content_sid,
+                content_variables=content_variables,
+            )
+        else:
+            message = client.messages.create(
+                body=message_body,
+                from_=TWILIO_SANDBOX_NUMBER,
+                to=to_whatsapp,
+            )
         return message.sid
     except Exception as exc:
         print(f"WhatsApp Dispatch Error: {exc}")

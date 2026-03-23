@@ -10,6 +10,36 @@ try:
 except ImportError:
     rust_engine = None
 
+def calculate_log_risk_score(logs):
+    """
+    Analyzes textual logs to determine a risk score (0-100).
+    Focuses on keyword detection (including Hinglish) and report frequency.
+    """
+    if not logs:
+        return 0
+
+    # Risk Weight Keywords
+    CRITICAL_KEYWORDS = ["dhuan", "smoke", "fire", "aag", "breakdown", "shat down", "fail", "total downtime", "leak", "phata"]
+    HIGH_KEYWORDS = ["awaz", "noise", "vibration", "vibrate", "garam", "hot", "overheat", "smell", "badhu", "lag", "atki"]
+    MEDIUM_KEYWORDS = ["slow", "halki", "minor", "check", "dekho", "servicing", "replacement"]
+
+    score = 0
+    recent_logs = logs[:5]  # Only analyze last 5 events
+    
+    for entry in recent_logs:
+        text = str(entry.get('note', '')).lower()
+        
+        # Keyword matching
+        if any(kw in text for kw in CRITICAL_KEYWORDS):
+            score += 40
+        elif any(kw in text for kw in HIGH_KEYWORDS):
+            score += 20
+        elif any(kw in text for kw in MEDIUM_KEYWORDS):
+            score += 10
+            
+    # Cap score at 100
+    return min(100, score)
+
 def calculate_failure_probability(readings):
     """
     Analyzes telemetry slope to predict failure.

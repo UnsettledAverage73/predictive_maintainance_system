@@ -1,17 +1,56 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || (typeof window !== 'undefined' ? `http://${window.location.hostname}:8000` : "http://localhost:8000");
+const normalizeBaseUrl = (value?: string) => value?.replace(/\/+$/, "") || "";
+
+const getBrowserBackendOrigin = () => {
+  if (typeof window === "undefined") {
+    return "http://127.0.0.1:8000";
+  }
+
+  return `${window.location.protocol}//${window.location.hostname}:8000`;
+};
+
+const EXTERNAL_API_BASE_URL = normalizeBaseUrl(process.env.NEXT_PUBLIC_API_URL);
+const API_BASE_URL = EXTERNAL_API_BASE_URL || "";
+
+export function buildApiUrl(endpoint: string) {
+  return API_BASE_URL ? `${API_BASE_URL}${endpoint}` : endpoint;
+}
+
+export function buildWebSocketUrl(path: string) {
+  const backendOrigin = EXTERNAL_API_BASE_URL || getBrowserBackendOrigin();
+  const wsUrl = new URL(backendOrigin);
+  wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
+  wsUrl.pathname = path;
+  wsUrl.search = "";
+  wsUrl.hash = "";
+  return wsUrl.toString();
+}
 
 export async function fetchApi(endpoint: string, options?: RequestInit) {
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...options?.headers,
-    },
-  });
+  const url = buildApiUrl(endpoint);
+  let response: Response;
+
+  try {
+    response = await fetch(url, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Network request failed";
+    throw new Error(`Unable to reach backend at ${API_BASE_URL || "same-origin /api proxy"}: ${message}`);
+  }
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: "Unknown error" }));
-    throw new Error(error.detail || response.statusText);
+    const error = await response.json().catch(async () => {
+      const text = await response.text().catch(() => "");
+      return { detail: text || response.statusText || "Unknown error" };
+    });
+    const message = typeof error.detail === 'string' 
+      ? error.detail
+      : JSON.stringify(error.detail) || response.statusText;
+    throw new Error(message);
   }
 
   return response.json();
@@ -26,11 +65,11 @@ export const api = {
   getMachineTelemetry: (id: string, minutes: number = 60) => fetchApi(`/api/telemetry/${id}?minutes=${minutes}`),
   getMachineHistory: (id: string) => fetchApi(`/api/history/${id}`),
   getAlerts: () => fetchApi("/api/alerts"),
-  getSchedule: () => fetchApi("/api/schedule"),
+  getSchedule: (aiPrioritized: boolean = false) => fetchApi(`/api/schedule?ai_prioritized=${aiPrioritized}`),
   updateTask: (id: number, payload: any) => fetchApi(`/api/schedule/${id}`, { method: "POST", body: JSON.stringify(payload) }),
   chat: (payload: any) => fetchApi("/api/chat", { method: "POST", body: JSON.stringify(payload) }),
   chatVoice: async (formData: FormData) => {
-    const response = await fetch(`${API_BASE_URL}/api/chat/voice`, {
+    const response = await fetch(buildApiUrl("/api/chat/voice"), {
       method: "POST",
       body: formData
     });
@@ -41,7 +80,7 @@ export const api = {
     return response.json();
   },
   chatVision: async (formData: FormData) => {
-    const response = await fetch(`${API_BASE_URL}/api/chat/vision`, {
+    const response = await fetch(buildApiUrl("/api/chat/vision"), {
       method: "POST",
       body: formData
     });
@@ -59,6 +98,6 @@ export const api = {
   addMachineParameter: (id: string, payload: any) => fetchApi(`/api/machines/${id}/parameters`, { method: "POST", body: JSON.stringify(payload) }),
   getTemplates: () => fetchApi("/api/machines/templates"),
   applyTemplate: (id: string, templateName: string) => fetchApi(`/api/machines/${id}/parameters/template/${templateName}`, { method: "POST" }),
-  previewCsv: (id: string, formData: FormData) => fetch(`${API_BASE_URL}/api/machines/${id}/import/preview`, { method: "POST", body: formData }).then(res => res.json()),
-  confirmCsv: (id: string, formData: FormData) => fetch(`${API_BASE_URL}/api/machines/${id}/import/confirm`, { method: "POST", body: formData }).then(res => res.json()),
+  previewCsv: (id: string, formData: FormData) => fetch(buildApiUrl(`/api/machines/${id}/import/preview`), { method: "POST", body: formData }).then(res => res.json()),
+  confirmCsv: (id: string, formData: FormData) => fetch(buildApiUrl(`/api/machines/${id}/import/confirm`), { method: "POST", body: formData }).then(res => res.json()),
 };

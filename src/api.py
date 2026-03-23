@@ -37,6 +37,7 @@ class ChatRequest(BaseModel):
     machineId: str
     machineName: str
     equipmentData: Optional[dict] = None
+    sessionId: Optional[str] = None
 
 class RepairRequest(BaseModel):
     equipment_id: str
@@ -131,24 +132,36 @@ async def chat_with_agent(req: ChatRequest):
     # 1. Check AI Cache (Phase 4)
     # Using a deterministic hash of the message content
     last_msg = req.messages[-1]["content"] if req.messages else ""
-    cache_key = f"ai_cache:{req.machineId}:{hash(last_msg)}"
-    cached_response = await r.get(cache_key)
-    if cached_response:
-        try:
-            return {**json.loads(cached_response), "cached": True}
-        except:
-            return {"response": cached_response, "cached": True}
+    cache_key = f"ai_cache:{req.machineId}:{req.sessionId or 'global'}:{hash(last_msg)}"
+    
+    cached_response = None
+    try:
+        cached_response = await r.get(cache_key)
+        if cached_response:
+            try:
+                return {**json.loads(cached_response), "cached": True}
+            except:
+                return {"response": cached_response, "cached": True}
+    except Exception as re:
+        print(f"Redis Cache Read Error: {re}")
 
     # 2. Advanced Real-time Inference
     user_msg = req.messages[-1]["content"]
     context_prefix = f"Analyzing Asset: {req.machineName} ({req.machineId}). Current State: {json.dumps(req.equipmentData)}. " if req.machineId != "GLOBAL" and req.equipmentData else ""
     
     try:
-        result = await agent.get_orchestrator_response(query=context_prefix + user_msg, machine_id=req.machineId)
-        response_data = {**result, "machineId": req.machineId}
+        result = await agent.get_orchestrator_response(
+            query=context_prefix + user_msg, 
+            machine_id=req.machineId,
+            session_id=req.sessionId
+        )
+        response_data = {**result, "machineId": req.machineId, "sessionId": req.sessionId}
         
         # 3. Save to Cache
-        await r.setex(cache_key, 3600, json.dumps(response_data)) # Cache for 1 hour
+        try:
+            await r.setex(cache_key, 3600, json.dumps(response_data)) # Cache for 1 hour
+        except Exception as re:
+            print(f"Redis Cache Write Error: {re}")
         
         return {**response_data, "cached": False}
     except Exception as e:
@@ -156,13 +169,30 @@ async def chat_with_agent(req: ChatRequest):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Internal Error: {str(e)}")
 
+@app.post("/api/chat/upload")
+async def upload_manual(machine_id: str = Form(...), file: UploadFile = File(...)):
+    """Uploads a PDF manual and ingests it into the AI's Knowledge Base."""
+    if not file.filename.lower().endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="Only PDF files are supported.")
+    
+    pdf_bytes = await file.read()
+    result = agent.ingest_manual_pdf(machine_id, file.filename, pdf_bytes)
+    
+    if "Error" in result or "Offline" in result:
+        raise HTTPException(status_code=500, detail=result)
+        
+    return {"status": "success", "message": result}
+
 @app.post("/api/onboard")
 async def onboard_machine(req: OnboardRequest):
     """Securely onboard new industrial assets."""
     # ... logic for onboarding ...
 @app.get("/api/schedule")
-async def get_schedule():
-    """Returns the master maintenance schedule from the Maintenance Layer."""
+async def get_schedule(ai_prioritized: bool = False):
+    """Returns the master maintenance schedule, optionally prioritized by AI."""
+    if ai_prioritized:
+        return agent.generate_prioritized_schedule()
+        
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
@@ -174,13 +204,49 @@ async def get_schedule():
     """)
     tasks = [dict(row) for row in cursor.fetchall()]
     conn.close()
+    
+    # Map to camelCase for frontend
+    for t in tasks:
+        if 'machine_id' in t: t['machineId'] = t.pop('machine_id')
+        if 'machine_name' in t: t['machineName'] = t.pop('machine_name')
+        if 'due_date' in t: t['dueDate'] = t.pop('due_date')
+        
     return tasks
 
 @app.post("/api/schedule/{task_id}")
-async def update_task_status(task_id: int, update: TaskUpdate):
+async def update_task_status(task_id: str, update: TaskUpdate):
     """Updates a maintenance task and broadcasts the change in real-time."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
+
+    # Handle Virtual AI Tasks (IDs starting with ai-gen-)
+    if task_id.startswith("ai-gen-"):
+        # 1. Verify this task exists in the current AI schedule
+        # We fetch the current schedule to find the metadata for this virtual task
+        current_ai_tasks = agent.generate_prioritized_schedule()
+        virtual_task = next((t for t in current_ai_tasks if str(t.get('id')) == task_id), None)
+        
+        if not virtual_task:
+             conn.close()
+             raise HTTPException(status_code=404, detail="AI Task expired or not found")
+        
+        # 2. Persist it to the real database so it becomes a "real" task
+        cursor.execute("""
+            INSERT INTO maintenance_tasks (machine_id, task_name, task_type, due_date, status, assigned_to, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            virtual_task['machineId'], 
+            virtual_task['title'], 
+            'repair', 
+            virtual_task['dueDate'], 
+            update.status, 
+            update.operator or "AI System",
+            virtual_task.get('aiReason', '')
+        ))
+        real_id = cursor.lastrowid
+        conn.commit()
+        # Update task_id to the new numeric ID for subsequent operations
+        task_id = str(real_id)
 
     completed_at = None
     if update.status == "completed":
@@ -200,19 +266,29 @@ async def update_task_status(task_id: int, update: TaskUpdate):
     conn.commit()
     
     # Fetch updated task for broadcast
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
     cursor.execute("""
         SELECT t.*, e.name as machine_name 
         FROM maintenance_tasks t
         JOIN equipment e ON t.machine_id = e.id
         WHERE t.id = ?
     """, (task_id,))
-    updated_task = dict(cursor.fetchone())
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Task not found after update")
+        
+    updated_task = dict(row)
     conn.close()
     
     # Broadcast via Redis
-    r_broadcast = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
-    await r_broadcast.publish(SCHEDULE_CHANNEL, json.dumps(updated_task))
-    await r_broadcast.aclose()
+    try:
+        r_broadcast = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+        await r_broadcast.publish(SCHEDULE_CHANNEL, json.dumps(updated_task))
+        await r_broadcast.aclose()
+    except Exception as re:
+        print(f"Redis Broadcast Error: {re}")
     
     return updated_task
 
@@ -221,18 +297,29 @@ async def schedule_websocket(websocket: WebSocket):
     await websocket.accept()
     r_async = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
     pubsub = r_async.pubsub()
-    await pubsub.subscribe(SCHEDULE_CHANNEL)
     
     try:
+        await pubsub.subscribe(SCHEDULE_CHANNEL)
         async for message in pubsub.listen():
             if message["type"] == "message":
                 await websocket.send_text(message["data"])
     except WebSocketDisconnect:
-        await pubsub.unsubscribe(SCHEDULE_CHANNEL)
+        try:
+            await pubsub.unsubscribe(SCHEDULE_CHANNEL)
+        except:
+            pass
     except Exception as e:
         print(f"Schedule WS Error: {e}")
+        try:
+            await websocket.send_text(json.dumps({"error": "Real-time updates unavailable (Redis Offline)"}))
+        except:
+            pass
+        await asyncio.sleep(60) 
     finally:
-        await r_async.aclose()
+        try:
+            await r_async.aclose()
+        except:
+            pass
 
 @app.get("/api/machines/{machine_id}/parameters")
 async def get_machine_params(machine_id: str):
@@ -397,9 +484,9 @@ async def telemetry_websocket(websocket: WebSocket, equipment_id: str):
     await websocket.accept()
     r_async = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
     pubsub = r_async.pubsub()
-    await pubsub.subscribe(REDIS_CHANNEL)
 
     try:
+        await pubsub.subscribe(REDIS_CHANNEL)
         async for message in pubsub.listen():
             if message["type"] == "message":
                 data = json.loads(message["data"])
@@ -411,11 +498,22 @@ async def telemetry_websocket(websocket: WebSocket, equipment_id: str):
                         "vibration": data.get("vibration", 0)
                     })
     except WebSocketDisconnect:
-        await pubsub.unsubscribe(REDIS_CHANNEL)
+        try:
+            await pubsub.unsubscribe(REDIS_CHANNEL)
+        except:
+            pass
     except Exception as e:
-        print(f"WS Error: {e}")
+        print(f"Telemetry WS Error: {e}")
+        try:
+            await websocket.send_json({"error": "Real-time telemetry unavailable (Redis Offline)"})
+        except:
+            pass
+        await asyncio.sleep(60)
     finally:
-        await r_async.aclose()
+        try:
+            await r_async.aclose()
+        except:
+            pass
 
 
 @app.get("/api/history/{equipment_id}")
@@ -430,9 +528,10 @@ async def get_machine_history(equipment_id: str):
     return rows
 
 @app.post("/api/chat/voice")
-async def chat_voice(file: UploadFile = File(...), machineId: str = Form("GLOBAL")):
+async def chat_voice(file: UploadFile = File(...), machineId: str = Form("GLOBAL"), sessionId: Optional[str] = Form(None)):
     audio_bytes = await file.read()
-    transcript = agent.speech_to_text(
+    transcript = await asyncio.to_thread(
+        agent.speech_to_text,
         audio_bytes,
         filename=file.filename or "audio.webm",
         content_type=file.content_type or "audio/webm"
@@ -445,17 +544,52 @@ async def chat_voice(file: UploadFile = File(...), machineId: str = Form("GLOBAL
             "sources": [],
             "confidence": 0
         }
-    result = await agent.get_orchestrator_response(query=transcript, machine_id=machineId)
-    audio_response = agent.text_to_speech(result["message"])
-    return {"transcript": transcript, "message": result["message"], "audio": audio_response, "sources": result["sources"], "confidence": result["confidence"]}
+    result = await agent.get_orchestrator_response(query=transcript, machine_id=machineId, session_id=sessionId)
+    audio_response = await asyncio.to_thread(agent.text_to_speech, result["message"])
+    return {"transcript": transcript, "message": result["message"], "audio": audio_response, "sources": result["sources"], "confidence": result["confidence"], "sessionId": sessionId}
 
 @app.post("/api/chat/vision")
-async def chat_vision(file: UploadFile = File(...), prompt: str = Form("Describe this machine event"), machineId: str = Form("GLOBAL")):
-    image_bytes = await file.read()
-    vision_context = agent.analyze_document_vision(image_bytes)
-    query = f"User Prompt: {prompt}\nContext from Image (Sarvam Vision): {vision_context}"
-    result = await agent.get_orchestrator_response(query=query, machine_id=machineId)
-    return {"visual_context": vision_context, "message": result["message"], "sources": result["sources"], "confidence": result["confidence"]}
+async def chat_vision(
+    files: List[UploadFile] = File(...), 
+    prompt: str = Form("Describe this machine event"), 
+    machineId: str = Form("GLOBAL"), 
+    sessionId: Optional[str] = Form(None)
+):
+    # Process all images in parallel
+    tasks = []
+    for file in files:
+        # Read the file content once before threading
+        content = await file.read()
+        tasks.append(asyncio.to_thread(agent.analyze_document_vision, content))
+    
+    vision_results = await asyncio.gather(*tasks)
+    
+    # Aggregate context
+    vision_context = "\n---\n".join([f"Image {i+1}: {res}" for i, res in enumerate(vision_results)])
+    
+    # Persistent Visual Memory: Log the aggregated vision context
+    from src.data.database import log_agent_interaction
+    await asyncio.to_thread(log_agent_interaction, machineId, "system_vision", vision_context, session_id=sessionId, is_visual_context=1)
+    
+    query = f"User Prompt: {prompt}\nContext from Images: {vision_context}"
+    result = await agent.get_orchestrator_response(query=query, machine_id=machineId, session_id=sessionId)
+    return {
+        "visual_context": vision_context, 
+        "message": result["message"], 
+        "sources": result["sources"], 
+        "confidence": result["confidence"], 
+        "sessionId": sessionId,
+        "image_count": len(files)
+    }
+    result = await agent.get_orchestrator_response(query=query, machine_id=machineId, session_id=sessionId)
+    return {
+        "visual_context": vision_context, 
+        "message": result["message"], 
+        "sources": result["sources"], 
+        "confidence": result["confidence"], 
+        "sessionId": sessionId,
+        "image_count": len(files)
+    }
 
 @app.get("/api/factory/stats")
 async def get_factory_stats():

@@ -2,13 +2,33 @@ import json
 import os
 import requests
 import time
-from typing import List, Dict, Any
-from groq import Groq
-from sarvamai import SarvamAI
-from pinecone import Pinecone, ServerlessSpec
-from dotenv import load_dotenv
+from typing import List, Dict, Any, Optional
+try:
+    from groq import Groq
+except ImportError:
+    Groq = None
+
+try:
+    from sarvamai import SarvamAI
+except ImportError:
+    SarvamAI = None
+try:
+    from pinecone import Pinecone, ServerlessSpec
+except ImportError:
+    Pinecone = None
+    ServerlessSpec = None
+
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    def load_dotenv(): pass
 from datetime import datetime, timedelta
 from src.agent import ocr_engine
+try:
+    from pypdf import PdfReader
+except ImportError:
+    PdfReader = None
+import io
 
 # Load environment variables
 load_dotenv()
@@ -17,6 +37,7 @@ class MaintenanceAgent:
     def __init__(self, data_path: str):
         self.data_path = data_path
         self.data = self._load_data()
+        self._last_schedule = [] # Cache for virtual task validation
         
         # Local Sovereign Configuration (Ollama)
         # Note: In Docker, use http://host.docker.internal:11434/api if Ollama is on host
@@ -26,7 +47,7 @@ class MaintenanceAgent:
         
         # Cloud Fallback 1: Groq (Llama 3.1 8B for efficiency)
         self.groq_key = os.getenv("GROQ_API_KEY")
-        if self.groq_key:
+        if self.groq_key and Groq:
             self.groq_client = Groq(api_key=self.groq_key)
             self.groq_model = 'llama-3.1-8b-instant'
         else:
@@ -34,7 +55,7 @@ class MaintenanceAgent:
 
         # Cloud Multilingual Layer: Sarvam AI
         self.sarvam_key = os.getenv("SARVAM_API_KEY")
-        if self.sarvam_key:
+        if self.sarvam_key and SarvamAI:
             self.sarvam_client = SarvamAI(api_subscription_key=self.sarvam_key)
             self.sarvam_model = "sarvam-105b"
         else:
@@ -43,7 +64,7 @@ class MaintenanceAgent:
         # Vector DB Configuration (Pinecone)
         self.pc_key = os.getenv("PINECONE_API_KEY")
         self.index_name = "maintenance-logs"
-        if self.pc_key:
+        if self.pc_key and Pinecone:
             self.pc = Pinecone(api_key=self.pc_key)
             self._init_pinecone()
         else:
@@ -70,11 +91,74 @@ class MaintenanceAgent:
             ]
         }
 
-    async def get_orchestrator_response(self, query: str, machine_id: str = "GLOBAL") -> Dict[str, Any]:
+    async def handle_slash_command(self, query: str, machine_id: str, session_id: str = None) -> Optional[Dict[str, Any]]:
+        """Parses and executes slash commands."""
+        parts = query.strip().split()
+        if not parts or not parts[0].startswith("/"):
+            return None
+
+        command = parts[0].lower()
+        args = parts[1:]
+
+        from src.data import database
+        
+        if command == "/help":
+            return {
+                "message": "Available Commands:\n- /status [id]: Get health snapshot\n- /priority: Show AI-prioritized schedule\n- /manuals: List uploaded manuals\n- /history: Show recent interaction history\n- /help: Show this menu",
+                "sources": [{"name": "System", "description": "Command Registry"}],
+                "confidence": 100
+            }
+
+        elif command == "/status":
+            target_id = args[0] if args else (machine_id if machine_id != "GLOBAL" else None)
+            if not target_id:
+                return {"message": "Please specify a machine ID: `/status CNC001`", "confidence": 100}
+            
+            health = database.get_machine_health_summary(target_id)
+            if not health['telemetry'] and not health['alerts']:
+                 return {"message": f"No data found for machine {target_id}.", "confidence": 100}
+            
+            status_msg = f"Health Status for {target_id}:\n"
+            if health['alerts']:
+                status_msg += f"- Latest Alert: {health['alerts'][0]['severity'].upper()}: {health['alerts'][0]['reason']}\n"
+            if health['telemetry']:
+                status_msg += f"- Current Temp: {health['telemetry'][0]['temperature']}°C\n"
+                status_msg += f"- Vibration: {health['telemetry'][0]['vibration']}mm/s"
+            
+            return {"message": status_msg, "sources": [{"name": "SQL Ledger", "description": "Live Telemetry"}], "confidence": 100}
+
+        elif command == "/priority" or command == "/schedule":
+            schedule = self.generate_prioritized_schedule()
+            msg = "AI-Prioritized Maintenance Schedule:\n"
+            for i, task in enumerate(schedule):
+                msg += f"{i+1}. [{task['priority'].upper()}] {task['title']} ({task['machineId']})\n"
+            return {"message": msg, "sources": [{"name": "AI Orchestrator", "description": "Heuristic Priority Engine"}], "confidence": 100}
+
+        elif command == "/manuals":
+            target_id = machine_id if machine_id != "GLOBAL" else None
+            manuals = database.get_registered_manuals(target_id)
+            if not manuals:
+                return {"message": "No manuals found for this asset.", "confidence": 100}
+            msg = "Registered Manuals:\n" + "\n".join([f"- {m['filename']} ({m['file_type']})" for m in manuals])
+            return {"message": msg, "sources": [{"name": "Knowledge Base", "description": "Manuals Registry"}], "confidence": 100}
+
+        elif command == "/history":
+            history = database.get_agent_history(machine_id=machine_id, session_id=session_id, limit=5)
+            msg = "Recent History:\n" + "\n".join([f"{h['role'].upper()}: {h['content'][:50]}..." for h in history])
+            return {"message": msg, "sources": [{"name": "Memory", "description": "Session Logs"}], "confidence": 100}
+
+        return None
+
+    async def get_orchestrator_response(self, query: str, machine_id: str = "GLOBAL", session_id: str = None) -> Dict[str, Any]:
         """
         The Sovereign Orchestrator: 
-        Retrieves context from SQL (Dynamic Parameters + Metadata), JSON, and Pinecone in parallel.
+        Retrieves context from SQL (Dynamic Parameters + Metadata + History), JSON, and Pinecone in parallel.
         """
+        # 0. Check for Slash Commands
+        command_result = await self.handle_slash_command(query, machine_id, session_id)
+        if command_result:
+            return command_result
+
         import asyncio
         from concurrent.futures import ThreadPoolExecutor
         loop = asyncio.get_event_loop()
@@ -90,7 +174,10 @@ class MaintenanceAgent:
             
             m_meta = ""
             p_context = ""
+            history_context = ""
+            visual_context_memory = ""
             
+            # 1. Asset Metadata & Thresholds
             if machine_id != "GLOBAL":
                 cursor.execute("SELECT * FROM equipment WHERE id = ?", (machine_id,))
                 m_row = cursor.fetchone()
@@ -100,55 +187,130 @@ class MaintenanceAgent:
                 params = database.get_machine_parameters(machine_id)
                 p_details = [f"- {p['display_name']} ({p['parameter_key']}): {p['normal_min']}-{p['normal_max']} {p['unit']}" for p in params if p.get('is_used_for_prediction')]
                 p_context = "\nTHRESHOLDS:\n" + "\n".join(p_details)
+                
+                # 2. Chat History (Short-term Memory)
+                history = database.get_agent_history(machine_id=machine_id, limit=5, session_id=session_id)
+                if history:
+                    history_context = "\nRECENT CONVERSATION:\n" + "\n".join([f"{h['role'].upper()}: {h['content']}" for h in history if not h.get('is_visual_context')])
+                
+                # 2.1 Persistent Visual Memory (Multimodal context)
+                v_contexts = database.get_recent_visual_context(machine_id, session_id, limit=5)
+                if v_contexts:
+                    visual_context_memory = "\nVISUAL MEMORY (Multiple recently uploaded images/documents):\n"
+                    for i, ctx in enumerate(reversed(v_contexts)): # Reverse to chronological
+                        visual_context_memory += f"Entry {i+1}: {ctx}\n"
+
             else:
                 cursor.execute("SELECT id, name, status FROM equipment LIMIT 10")
                 m_meta = "PLANT SUMMARY:\n" + "\n".join([f"- {m['name']} ({m['id']}): {m['status']}" for m in cursor.fetchall()])
 
+            # 3. Recent Alerts
             cursor.execute("SELECT severity, reason FROM ai_alerts WHERE equipment_id = ? OR ? = 'GLOBAL' ORDER BY timestamp DESC LIMIT 3", (machine_id, machine_id))
             alerts = [f"{r[0]}: {r[1]}" for r in cursor.fetchall()]
             conn.close()
-            return m_meta, p_context, alerts
+            return m_meta, p_context, alerts, history_context, visual_context_memory
 
         # Parallel Execution: SQL + Pinecone
         sql_task = loop.run_in_executor(executor, fetch_sql_context)
-        vector_task = loop.run_in_executor(executor, self.query_similar_issues, query, 3) # Increased top_k for few-shot
+        vector_task = loop.run_in_executor(executor, self.query_similar_issues, query, 5) # Increased top_k
 
-        m_meta, p_context, sql_alerts = await sql_task
+        m_meta, p_context, sql_alerts, history_context, visual_context_memory = await sql_task
         vector_context = await vector_task
 
-        # 4. Construct Optimized Few-Shot Prompt
+        # 4. Construct Optimized Prompt
         system_prompt = f"""
-        You are the Sovereign Industrial Intelligence. 
-        Your goal is to provide high-precision maintenance prescriptions.
+        You are the Sovereign Industrial Intelligence Orchestrator. 
+        Your goal is to provide high-precision maintenance prescriptions using all available multimodal context.
 
-        STRATEGIC CONTEXT:
+        STRATEGIC ASSET CONTEXT:
         {m_meta}
         {p_context}
         
         RECENT ANOMALIES (SQL):
         {sql_alerts}
 
-        HISTORICAL FIXES & MEMORY (RAG):
+        {visual_context_memory}
+
+        {history_context}
+
+        INDUSTRIAL KNOWLEDGE BASE (RAG - Manuals & Logs):
         {vector_context}
 
         INSTRUCTIONS:
-        1. Analyze the current query against Threholds and Historical Memory.
-        2. If a similar past fix exists in memory, prioritize that reasoning.
-        3. Be extremely concise. Use technical, engineer-first language.
-        4. Current Target: {machine_id}
+        1. PRIORITIZE Ground Truth from "INDUSTRIAL KNOWLEDGE BASE" if relevant.
+        2. Use "VISUAL MEMORY" if the user's query refers to images or documents they previously uploaded. 
+           Synthesize information across MULTIPLE visual entries if the query requires it.
+        3. Use "RECENT CONVERSATION" to maintain context if the user asks follow-up questions.
+        4. If telemetry exceeds THRESHOLDS, flag it immediately.
+        5. Be extremely technical and concise.
+        6. Current Target: {machine_id}
         """
         
         # Cloud Inference
         response = self._get_cloud_inference(system_prompt, query)
         
+        # Log this interaction to SQL
+        from src.data.database import log_agent_interaction
+        log_agent_interaction(machine_id, "user", query, session_id=session_id)
+        log_agent_interaction(machine_id, "assistant", response, session_id=session_id)
+        
         return {
             "message": response,
             "sources": [
-                {"name": "Parallel SQL Fetch", "description": "Retrieved metadata & active alerts"},
-                {"name": "Neural RAG Search", "description": f"Few-shot examples from memory: {len(vector_context.split('|'))} matches"}
+                {"name": "Multimodal RAG", "description": "Manuals & Repair Logs retrieved"},
+                {"name": "Short-term Memory", "description": "Last 5 chat interactions analyzed"},
+                {"name": "Live SQL State", "description": "Asset metadata & alerts fused"}
             ],
             "confidence": 98.5
         }
+
+    def ingest_manual_pdf(self, machine_id: str, filename: str, pdf_bytes: bytes):
+        """
+        Extracts text from industrial PDF manuals, chunks it, and indexes in Pinecone.
+        """
+        if not self.pc or not self.index:
+            return "Vector DB Offline"
+
+        try:
+            reader = PdfReader(io.BytesIO(pdf_bytes))
+            full_text = ""
+            for page in reader.pages:
+                full_text += page.extract_text() + "\n"
+
+            # Recursive Chunking (Simple implementation)
+            chunk_size = 800
+            overlap = 100
+            chunks = []
+            for i in range(0, len(full_text), chunk_size - overlap):
+                chunks.append(full_text[i : i + chunk_size])
+
+            vectors = []
+            for i, chunk in enumerate(chunks):
+                embedding = self._get_embedding(chunk)
+                if embedding:
+                    vectors.append({
+                        "id": f"manual_{machine_id}_{int(time.time())}_{i}",
+                        "values": embedding,
+                        "metadata": {
+                            "machine_id": machine_id,
+                            "content": chunk,
+                            "source": filename,
+                            "type": "manual_chunk"
+                        }
+                    })
+            
+            if vectors:
+                # Upsert in batches of 50
+                for i in range(0, len(vectors), 50):
+                    self.index.upsert(vectors=vectors[i:i+50])
+                
+                from src.data.database import register_manual
+                register_manual(machine_id, filename, "pdf", f"manual_{machine_id}")
+                return f"Ingested {len(vectors)} chunks from {filename}."
+            
+            return "No text extracted from PDF."
+        except Exception as e:
+            return f"Ingestion Error: {str(e)}"
 
     def process_multimodal_event(self, telemetry_data: Dict[str, Any], image_bytes: bytes) -> Dict[str, Any]:
         """
@@ -438,53 +600,95 @@ class MaintenanceAgent:
 
     def generate_prioritized_schedule(self) -> List[Dict[str, Any]]:
         """
-        Generates a prioritized list of maintenance tasks.
-        In a full implementation, this would analyze risk scores and pending alerts.
+        Generates a prioritized list of maintenance tasks using AI reasoning and live data.
+        Combines telemetry probability with textual log risk analysis.
         """
-        return [
-            {
-                "id": "task-101",
-                "machineId": "CNC001",
-                "machineName": "CNC Lathe Machine A",
-                "title": "Bearing Inspection & Lubrication",
-                "description": "High vibration detected in spindle assembly. Inspect bearings for wear.",
-                "aiReason": "Linear regression shows 82% probability of bearing failure within 48h.",
-                "priority": "critical",
-                "status": "pending",
-                "dueDate": (datetime.now() + timedelta(days=1)).isoformat(),
-                "assignedTo": "Sarah Connor",
-                "estimatedHours": 2.5,
-                "createdAt": datetime.now().isoformat()
-            },
-            {
-                "id": "task-102",
-                "machineId": "EXT002",
-                "machineName": "Extruder D",
-                "title": "Heating Element Calibration",
-                "description": "Temperature fluctuations observed in Zone 3.",
-                "aiReason": "Thermal patterns indicate potential thermocouple degradation.",
-                "priority": "high",
-                "status": "in_progress",
-                "dueDate": (datetime.now() + timedelta(days=2)).isoformat(),
-                "assignedTo": "Mike T.",
-                "estimatedHours": 1.5,
-                "createdAt": datetime.now().isoformat()
-            },
-            {
-                "id": "task-103",
-                "machineId": "HYD005",
-                "machineName": "Hydraulic Press C",
-                "title": "Fluid Level & Seal Check",
-                "description": "Minor pressure drop during peak load.",
-                "aiReason": "Efficiency dropped by 4% over the last 100 cycles.",
-                "priority": "medium",
-                "status": "pending",
-                "dueDate": (datetime.now() + timedelta(days=5)).isoformat(),
-                "assignedTo": "Alex J.",
-                "estimatedHours": 4.0,
-                "createdAt": datetime.now().isoformat()
-            }
-        ]
+        from src.data import database
+        from src.data.analytics import calculate_failure_probability, calculate_log_risk_score
+        
+        all_equipment = database.get_all_equipment_metadata()
+        pending_tasks = database.get_all_pending_tasks()
+        
+        prioritized = []
+        
+        for eq in all_equipment:
+            # 1. Telemetry Analysis
+            health = database.get_machine_health_summary(eq['id'])
+            telemetry_prob, _ = calculate_failure_probability(health['telemetry'])
+            
+            # 2. Textual Log Analysis
+            text_history = database.get_machine_textual_history(eq['id'])
+            log_risk = calculate_log_risk_score(text_history)
+            
+            # 3. Unified Risk Scoring
+            # Final probability is the maximum of the two risk sources
+            final_risk = max(telemetry_prob, log_risk)
+            
+            # 4. Strategic Reasoning (AI-driven)
+            # Only call LLM if risk is significant to save tokens
+            ai_reason = ""
+            if final_risk > 20:
+                summary_logs = [log['note'] for log in text_history[:3]]
+                prompt = f"""
+                Analyze the following data for machine {eq['name']} ({eq['id']}):
+                - Telemetry Failure Prob: {telemetry_prob}%
+                - Recent Operator Notes: {json.dumps(summary_logs)}
+                - Recent SQL Alerts: {json.dumps(health['alerts'])}
+                
+                Provide a 1-sentence technical justification for the maintenance priority.
+                Keep it under 20 words.
+                """
+                ai_reason = self._get_cloud_inference("You are a senior maintenance engineer.", prompt)
+            else:
+                ai_reason = "Routine monitoring based on standard schedule."
+
+            # 5. Task Generation or Update
+            is_critical = final_risk > 50 or health['alerts']
+            priority = "critical" if final_risk > 80 else ("high" if final_risk > 50 else ("medium" if final_risk > 20 else "low"))
+            
+            # Find if there's already a task for this machine
+            existing_task = next((t for t in pending_tasks if t['machine_id'] == eq['id']), None)
+            
+            if not existing_task and is_critical:
+                prioritized.append({
+                    "id": f"ai-gen-{eq['id']}-{int(time.time())}",
+                    "machineId": eq['id'],
+                    "machineName": eq['name'],
+                    "title": f"Urgent Diagnostic: {eq['name']}",
+                    "description": f"AI-detected anomaly requires immediate inspection. Unified Risk: {final_risk}%.",
+                    "aiReason": ai_reason,
+                    "priority": priority,
+                    "status": "pending",
+                    "dueDate": datetime.now().isoformat(),
+                    "assignedTo": "Unassigned",
+                    "estimatedHours": 2.5,
+                    "createdAt": datetime.now().isoformat()
+                })
+            elif existing_task:
+                # Update existing task with AI context
+                existing_task_copy = dict(existing_task)
+                # Ensure priority is elevated if AI detects higher risk
+                priority_map = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+                if priority_map.get(priority, 3) < priority_map.get(existing_task_copy.get('priority', 'low'), 3):
+                    existing_task_copy['priority'] = priority
+                
+                existing_task_copy['aiReason'] = ai_reason
+                # Map to frontend camelCase
+                existing_task_copy['machineId'] = existing_task_copy.pop('machine_id')
+                existing_task_copy['machineName'] = existing_task_copy.pop('machine_name')
+                existing_task_copy['dueDate'] = existing_task_copy.pop('due_date')
+                existing_task_copy['title'] = existing_task_copy.pop('task_name')
+                prioritized.append(existing_task_copy)
+            elif not is_critical:
+                 # Add routine tasks even if not critical
+                 pass
+
+        # 6. Sort and Final Polish
+        priority_map = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+        prioritized.sort(key=lambda x: priority_map.get(x.get('priority', 'medium'), 2))
+        
+        self._last_schedule = prioritized[:12]
+        return self._last_schedule
 
 
     def ingest_human_fix(self, eq_id: str, action: str):

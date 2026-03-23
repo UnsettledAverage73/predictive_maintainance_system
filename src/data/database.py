@@ -3,13 +3,14 @@ from datetime import datetime, timedelta
 import os
 
 DB_PATH = "data/factory_ops.db"
+TEXTUAL_DATA_PATH = "data/sample_maintenance_data.json"
 
 def init_db():
     """Initializes the Sovereign Ledger with Telemetry, Intelligence, and Human Feedback layers."""
     os.makedirs("data", exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    
+   # connect 
     # 1. Telemetry Layer: High-frequency raw sensor data (Legacy)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS sensor_readings (
@@ -121,6 +122,32 @@ def init_db():
             FOREIGN KEY(machine_id) REFERENCES equipment(id)
         )
     ''')
+
+    # 6. AI Agent Memory: Chat History
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS agent_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT,
+            machine_id TEXT NOT NULL,
+            role TEXT NOT NULL, -- user, assistant, system_vision
+            content TEXT NOT NULL,
+            is_visual_context BOOLEAN DEFAULT 0, -- Flag for OCR/Vision data
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # 7. Knowledge Base: Manuals Registry
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS manuals_registry (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            machine_id TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            file_type TEXT NOT NULL, -- pdf, image, doc
+            pinecone_id_prefix TEXT,
+            uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(machine_id) REFERENCES equipment(id)
+        )
+    ''')
     
     conn.commit()
     conn.close()
@@ -128,7 +155,163 @@ def init_db():
     # 5. Seed initial data if empty
     seed_initial_data()
     
-    print(f"--- [DATABASE UPDATED] Schema V2 Live at {DB_PATH} ---")
+    print(f"--- [DATABASE UPDATED] Schema V3 Live at {DB_PATH} ---")
+
+def log_agent_interaction(machine_id, role, content, session_id=None, is_visual_context=0):
+    """Saves a chat interaction to the Sovereign Memory."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO agent_history (machine_id, role, content, session_id, is_visual_context) VALUES (?, ?, ?, ?, ?)",
+        (machine_id, role, content, session_id, is_visual_context)
+    )
+    conn.commit()
+    conn.close()
+
+def get_agent_history(machine_id=None, limit=10, session_id=None):
+    """Retrieves previous interactions for a specific machine context or session."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    if session_id:
+        cursor.execute(
+            "SELECT role, content, timestamp, is_visual_context FROM agent_history WHERE session_id = ? ORDER BY timestamp DESC, id DESC LIMIT ?",
+            (session_id, limit)
+        )
+    elif machine_id:
+        cursor.execute(
+            "SELECT role, content, timestamp, is_visual_context FROM agent_history WHERE machine_id = ? ORDER BY timestamp DESC, id DESC LIMIT ?",
+            (machine_id, limit)
+        )
+    else:
+        cursor.execute(
+            "SELECT role, content, timestamp, is_visual_context FROM agent_history ORDER BY timestamp DESC, id DESC LIMIT ?",
+            (limit,)
+        )
+        
+    rows = cursor.fetchall()
+    conn.close()
+    # Reverse to get chronological order
+    return [dict(row) for row in reversed(rows)]
+
+def get_recent_visual_context(machine_id, session_id=None, limit=5):
+    """Fetches the most recent visual context (OCR/Vision) entries for a session."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    if session_id:
+        cursor.execute("""
+            SELECT content FROM agent_history 
+            WHERE session_id = ? AND is_visual_context = 1 
+            ORDER BY timestamp DESC LIMIT ?
+        """, (session_id, limit))
+    else:
+        cursor.execute("""
+            SELECT content FROM agent_history 
+            WHERE machine_id = ? AND is_visual_context = 1 
+            ORDER BY timestamp DESC LIMIT ?
+        """, (machine_id, limit))
+    
+    rows = cursor.fetchall()
+    conn.close()
+    return [row['content'] for row in rows] if rows else []
+
+def get_machine_textual_history(machine_id):
+    """
+    Consolidates textual history (operational notes, incident reports, manual logs)
+    from both the JSON flat file and the SQLite Sovereign Ledger.
+    """
+    import json
+    history = []
+    
+    # 1. Fetch from SQLite Manual Logs
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT timestamp, action_taken as note, 'Technician' as observed_by FROM manual_logs WHERE equipment_id = ?", (machine_id,))
+    history.extend([dict(row) for row in cursor.fetchall()])
+    conn.close()
+
+    # 2. Fetch from JSON Sample Data
+    try:
+        with open(TEXTUAL_DATA_PATH, "r") as f:
+            sample_data = json.load(f)
+            
+            # Operational Notes
+            history.extend([n for n in sample_data.get("operational_notes", []) if n['equipment_id'] == machine_id])
+            
+            # Incident Reports (Mapped to note format)
+            for inc in sample_data.get("incident_reports", []):
+                if inc['equipment_id'] == machine_id:
+                    history.append({
+                        "timestamp": inc['timestamp'],
+                        "note": f"INCIDENT: {inc['incident_type']} - {inc['description']}. Impact: {inc['impact']}",
+                        "observed_by": "System"
+                    })
+    except FileNotFoundError:
+        pass
+        
+    # Sort by timestamp descending
+    history.sort(key=lambda x: x['timestamp'], reverse=True)
+    return history
+
+def get_machine_health_summary(machine_id):
+    """Returns a summary of machine health for scheduling prioritization."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    # 1. Recent Alerts
+    cursor.execute("SELECT severity, reason FROM ai_alerts WHERE equipment_id = ? ORDER BY timestamp DESC LIMIT 3", (machine_id,))
+    alerts = [dict(row) for row in cursor.fetchall()]
+    
+    # 2. Recent Telemetry
+    cursor.execute("SELECT temperature, vibration FROM sensor_readings WHERE equipment_id = ? ORDER BY timestamp DESC LIMIT 5", (machine_id,))
+    telemetry = [dict(row) for row in cursor.fetchall()]
+    
+    conn.close()
+    return {"alerts": alerts, "telemetry": telemetry}
+
+def get_all_pending_tasks():
+    """Retrieves all tasks that are not completed."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT t.*, e.name as machine_name 
+        FROM maintenance_tasks t
+        JOIN equipment e ON t.machine_id = e.id
+        WHERE t.status != 'completed'
+        ORDER BY t.due_date ASC
+    """)
+    tasks = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return tasks
+
+def register_manual(machine_id, filename, file_type, pinecone_prefix=None):
+    """Registers an uploaded manual in the industrial knowledge base."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO manuals_registry (machine_id, filename, file_type, pinecone_id_prefix) VALUES (?, ?, ?, ?)",
+        (machine_id, filename, file_type, pinecone_prefix)
+    )
+    conn.commit()
+    conn.close()
+
+def get_registered_manuals(machine_id=None):
+    """Retrieves list of available manuals."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    if machine_id:
+        cursor.execute("SELECT * FROM manuals_registry WHERE machine_id = ?", (machine_id,))
+    else:
+        cursor.execute("SELECT * FROM manuals_registry")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
 
 from datetime import datetime, timedelta
 
@@ -155,9 +338,9 @@ def seed_initial_data():
             seed_common_parameters(eq_id)
             # Add some machine-specific parameters too
             if eq_id == "CNC001":
-                add_parameter(eq_id, "spindle_load", "Spindle Load", "%", n_min=0, n_max=70, w_th=85, c_th=100)
+                add_parameter(eq_id, "spindle_load", "Spindle Load", "%", normal_min=0, normal_max=70, warning_threshold=85, critical_threshold=100)
             elif eq_id == "HYD005":
-                add_parameter(eq_id, "oil_temp", "Oil Temperature", "°C", n_min=30, n_max=60, w_th=75, c_th=85)
+                add_parameter(eq_id, "oil_temp", "Oil Temperature", "°C", normal_min=30, normal_max=60, warning_threshold=75, critical_threshold=85)
         
         seed_maintenance_tasks()
 
