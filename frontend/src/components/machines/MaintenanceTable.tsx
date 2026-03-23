@@ -5,6 +5,10 @@ interface MaintenanceTableProps {
   logs: MaintenanceTask[];
 }
 
+const getAssignee = (log: MaintenanceTask) => log.assignedTo || log.assigned_to || 'Unassigned';
+const getLogDate = (log: MaintenanceTask) => new Date(log.createdAt || log.created_at || Date.now()).toLocaleDateString();
+const getLogTitle = (log: MaintenanceTask) => log.title || log.task_name;
+
 export function MaintenanceTable({ logs }: MaintenanceTableProps) {
   return (
     <div className="w-full">
@@ -23,14 +27,21 @@ export function MaintenanceTable({ logs }: MaintenanceTableProps) {
             {logs.map((log) => (
               <tr key={log.id} className="hover:bg-[var(--color-surface)]/50 transition-colors">
                 <td className="px-4 py-3 font-mono text-[var(--color-muted)] text-xs">
-                  {new Date(log.createdAt).toLocaleDateString()}
+                  {getLogDate(log)}
                 </td>
-                <td className="px-4 py-3 text-[var(--color-foreground)] font-medium text-sm">{log.title}</td>
+                <td className="px-4 py-3 text-[var(--color-foreground)] font-medium text-sm">{getLogTitle(log)}</td>
                 <td className="px-4 py-3 flex items-center gap-2">
+                  {(() => {
+                    const assignee = getAssignee(log);
+                    return (
+                      <>
                   <div className="w-6 h-6 rounded-full bg-slate-800 border border-[var(--color-border)] flex items-center justify-center text-[10px] font-bold shadow-sm">
-                    {log.assignedTo.charAt(0)}
+                    {assignee.charAt(0).toUpperCase()}
                   </div>
-                  <span className="text-sm">{log.assignedTo}</span>
+                  <span className="text-sm">{assignee}</span>
+                      </>
+                    );
+                  })()}
                 </td>
                 <td className="px-4 py-3">
                   <span className={`px-2.5 py-1 rounded text-[10px] font-bold tracking-wider uppercase ${
@@ -58,7 +69,7 @@ export function MaintenanceTable({ logs }: MaintenanceTableProps) {
             }`} />
             
             <div className="flex justify-between items-start pl-2">
-              <h4 className="font-bold text-[13px] text-white tracking-wide pr-2 leading-snug">{log.title}</h4>
+              <h4 className="font-bold text-[13px] text-white tracking-wide pr-2 leading-snug">{getLogTitle(log)}</h4>
               <span className={`px-2 py-0.5 rounded text-[9px] font-bold tracking-wider uppercase whitespace-nowrap ${
                 log.status === 'completed' ? 'bg-[var(--color-success)]/10 text-[var(--color-success)] border border-[var(--color-success)]/20' 
                 : log.status === 'in_progress' ? 'bg-[var(--color-warning)]/10 text-[var(--color-warning)] border border-[var(--color-warning)]/20'
@@ -70,12 +81,12 @@ export function MaintenanceTable({ logs }: MaintenanceTableProps) {
             
             <div className="flex justify-between items-center text-xs pl-2 pt-1">
               <span className="font-mono text-[var(--color-muted)] text-[11px]">
-                {new Date(log.createdAt).toLocaleDateString()}
+                {getLogDate(log)}
               </span>
               <div className="flex items-center gap-2 text-[var(--color-muted)]">
-                <span className="text-[11px] font-medium">{log.assignedTo}</span>
+                <span className="text-[11px] font-medium">{getAssignee(log)}</span>
                 <div className="w-5 h-5 rounded-full bg-slate-800 border border-slate-600 flex items-center justify-center text-[9px] font-bold text-white shadow-inner">
-                  {log.assignedTo.charAt(0)}
+                  {getAssignee(log).charAt(0).toUpperCase()}
                 </div>
               </div>
             </div>

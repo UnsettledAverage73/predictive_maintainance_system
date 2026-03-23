@@ -64,9 +64,10 @@ export const api = {
   getFactoryUsage: () => fetchApi("/api/factory/usage"),
   getMachineTelemetry: (id: string, minutes: number = 60) => fetchApi(`/api/telemetry/${id}?minutes=${minutes}`),
   getMachineHistory: (id: string) => fetchApi(`/api/history/${id}`),
+  getMachineInsights: (id: string) => fetchApi(`/api/machines/${id}/insights`),
   getAlerts: () => fetchApi("/api/alerts"),
   getSchedule: (aiPrioritized: boolean = false) => fetchApi(`/api/schedule?ai_prioritized=${aiPrioritized}`),
-  updateTask: (id: number, payload: any) => fetchApi(`/api/schedule/${id}`, { method: "POST", body: JSON.stringify(payload) }),
+  updateTask: (id: number | string, payload: any) => fetchApi(`/api/schedule/${id}`, { method: "POST", body: JSON.stringify(payload) }),
   chat: (payload: any) => fetchApi("/api/chat", { method: "POST", body: JSON.stringify(payload) }),
   chatVoice: async (formData: FormData) => {
     const response = await fetch(buildApiUrl("/api/chat/voice"), {

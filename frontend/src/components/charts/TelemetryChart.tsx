@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { TelemetryPoint } from "@/types";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
+import { buildWebSocketUrl } from "@/lib/api";
 
 interface TelemetryChartProps {
   data: TelemetryPoint[];
@@ -24,9 +25,8 @@ export function TelemetryChart({ data: initialData, machineId, parameters, class
   useEffect(() => {
     if (!machineId) return;
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = process.env.NEXT_PUBLIC_API_URL?.replace(/^https?:\/\//, '') || (typeof window !== 'undefined' ? `${window.location.hostname}:8000` : 'localhost:8000');
-    const ws = new WebSocket(`${protocol}//${host}/api/telemetry/ws/${machineId}`);
+    const wsUrl = buildWebSocketUrl(`/ws/telemetry/${machineId}`);
+    const ws = new WebSocket(wsUrl);
 
     ws.onmessage = (event) => {
       const point = JSON.parse(event.data);

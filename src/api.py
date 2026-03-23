@@ -15,6 +15,7 @@ from src.data.analytics import calculate_failure_probability
 from src.agent.reporter import SovereignReporter
 from src.agent.cloud_provisioner import router as cloud_router
 from src.data.database import init_db
+from src.services.machine_insights import get_machine_insights
 from src.notifications.whatsapp import get_config, save_config
 
 # Path Configurations
@@ -79,6 +80,25 @@ class TaskUpdate(BaseModel):
     status: str
     notes: Optional[str] = None
     operator: Optional[str] = None
+
+
+def resolve_virtual_task(task_id: str) -> Optional[Dict[str, Any]]:
+    """Resolve a virtual AI task from cached or freshly generated schedules."""
+    cached_tasks = getattr(agent, "_last_schedule", []) or []
+    virtual_task = next((t for t in cached_tasks if str(t.get("id")) == task_id), None)
+    if virtual_task:
+        return virtual_task
+
+    current_ai_tasks = agent.generate_prioritized_schedule()
+    virtual_task = next((t for t in current_ai_tasks if str(t.get("id")) == task_id), None)
+    if virtual_task:
+        return virtual_task
+
+    if task_id.startswith("ai-gen-"):
+        machine_id = task_id.removeprefix("ai-gen-")
+        return next((t for t in current_ai_tasks if t.get("machineId") == machine_id), None)
+
+    return None
 
 # App Initialization
 app = FastAPI(title="Sovereign Predictive Maintenance API")
@@ -221,10 +241,8 @@ async def update_task_status(task_id: str, update: TaskUpdate):
 
     # Handle Virtual AI Tasks (IDs starting with ai-gen-)
     if task_id.startswith("ai-gen-"):
-        # 1. Verify this task exists in the current AI schedule
-        # We fetch the current schedule to find the metadata for this virtual task
-        current_ai_tasks = agent.generate_prioritized_schedule()
-        virtual_task = next((t for t in current_ai_tasks if str(t.get('id')) == task_id), None)
+        # 1. Verify this task exists in the cached or current AI schedule
+        virtual_task = resolve_virtual_task(task_id)
         
         if not virtual_task:
              conn.close()
@@ -470,10 +488,39 @@ async def get_machine_telemetry(equipment_id: str, minutes: int = 60):
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
+        
+        # 1. Fetch from the legacy sensor_readings for backwards compatibility
         cursor.execute("SELECT timestamp as time, temperature, vibration FROM sensor_readings WHERE equipment_id = ? AND timestamp > datetime('now', '-' || ? || ' minutes') ORDER BY timestamp ASC", (equipment_id, minutes))
-        rows = [dict(row) for row in cursor.fetchall()]
+        legacy_rows = [dict(row) for row in cursor.fetchall()]
+        
+        # 2. Fetch from the dynamic telemetry_readings table for new parameters
+        cursor.execute("""
+            SELECT timestamp as time, parameter_key, value
+            FROM telemetry_readings
+            WHERE machine_id = ?
+              AND timestamp > datetime('now', '-' || ? || ' minutes')
+            ORDER BY timestamp ASC
+        """, (equipment_id, minutes))
+        dynamic_rows = cursor.fetchall()
+        
+        # 3. Pivot dynamic rows by timestamp
+        pivoted_data = {}
+        for row in dynamic_rows:
+            t = row['time']
+            if t not in pivoted_data: pivoted_data[t] = {"time": t}
+            pivoted_data[t][row['parameter_key']] = row['value']
+            
+        # 4. Merge
+        merged_data = {row['time']: row for row in legacy_rows}
+        for t, data in pivoted_data.items():
+            if t in merged_data:
+                merged_data[t].update(data)
+            else:
+                merged_data[t] = data
+                
+        results = sorted(merged_data.values(), key=lambda x: x['time'])
         conn.close()
-        return rows
+        return results
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -492,11 +539,16 @@ async def telemetry_websocket(websocket: WebSocket, equipment_id: str):
                 data = json.loads(message["data"])
                 # Only send if it matches the equipment_id requested
                 if data.get("equipment_id") == equipment_id:
-                    await websocket.send_json({
+                    # Send time and spread all parameters
+                    payload = {
                         "time": data.get("timestamp", time.time()),
-                        "temperature": data.get("temperature", 0),
-                        "vibration": data.get("vibration", 0)
-                    })
+                        **data.get("parameters", {})
+                    }
+                    # For legacy support, also include temperature/vibration at root if they are in parameters
+                    if "temperature" in payload: payload["temperature"] = payload["temperature"]
+                    if "vibration" in payload: payload["vibration"] = payload["vibration"]
+                    
+                    await websocket.send_json(payload)
     except WebSocketDisconnect:
         try:
             await pubsub.unsubscribe(REDIS_CHANNEL)
@@ -526,6 +578,16 @@ async def get_machine_history(equipment_id: str):
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return rows
+
+
+@app.get("/api/machines/{machine_id}/insights")
+async def get_machine_insights_api(machine_id: str):
+    try:
+        return get_machine_insights(machine_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to compute machine insights: {exc}")
 
 @app.post("/api/chat/voice")
 async def chat_voice(file: UploadFile = File(...), machineId: str = Form("GLOBAL"), sessionId: Optional[str] = Form(None)):

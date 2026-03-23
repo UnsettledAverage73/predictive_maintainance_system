@@ -182,6 +182,7 @@ class MaintenanceAgent:
                 cursor.execute("SELECT * FROM equipment WHERE id = ?", (machine_id,))
                 m_row = cursor.fetchone()
                 if m_row:
+                    m_row = dict(m_row)
                     m_meta = f"ASSET: {m_row['name']} ({m_row['id']}) | Plant: {m_row.get('plant_id','Hosur')} | Sector: {m_row.get('sector','Auto')}"
                 
                 params = database.get_machine_parameters(machine_id)
@@ -207,14 +208,24 @@ class MaintenanceAgent:
             # 3. Recent Alerts
             cursor.execute("SELECT severity, reason FROM ai_alerts WHERE equipment_id = ? OR ? = 'GLOBAL' ORDER BY timestamp DESC LIMIT 3", (machine_id, machine_id))
             alerts = [f"{r[0]}: {r[1]}" for r in cursor.fetchall()]
+
+            # 4. Current Telemetry
+            telemetry_context = ""
+            if machine_id != "GLOBAL":
+                # Corrected table name to telemetry_readings and column to machine_id
+                cursor.execute("SELECT parameter_key, value FROM telemetry_readings WHERE machine_id = ? ORDER BY timestamp DESC LIMIT 10", (machine_id,))
+                t_rows = cursor.fetchall()
+                if t_rows:
+                    telemetry_context = "\nCURRENT TELEMETRY:\n" + "\n".join([f"- {r['parameter_key']}: {r['value']}" for r in t_rows])
+
             conn.close()
-            return m_meta, p_context, alerts, history_context, visual_context_memory
+            return m_meta, p_context, alerts, history_context, visual_context_memory, telemetry_context
 
         # Parallel Execution: SQL + Pinecone
         sql_task = loop.run_in_executor(executor, fetch_sql_context)
         vector_task = loop.run_in_executor(executor, self.query_similar_issues, query, 5) # Increased top_k
 
-        m_meta, p_context, sql_alerts, history_context, visual_context_memory = await sql_task
+        m_meta, p_context, sql_alerts, history_context, visual_context_memory, telemetry_context = await sql_task
         vector_context = await vector_task
 
         # 4. Construct Optimized Prompt
@@ -226,6 +237,8 @@ class MaintenanceAgent:
         {m_meta}
         {p_context}
         
+        {telemetry_context}
+
         RECENT ANOMALIES (SQL):
         {sql_alerts}
 
@@ -242,12 +255,14 @@ class MaintenanceAgent:
            Synthesize information across MULTIPLE visual entries if the query requires it.
         3. Use "RECENT CONVERSATION" to maintain context if the user asks follow-up questions.
         4. If telemetry exceeds THRESHOLDS, flag it immediately.
-        5. Be extremely technical and concise.
-        6. Current Target: {machine_id}
+        5. Be technical, structured, and complete.
+        6. Use short sections with headings when useful.
+        7. Do not stop mid-analysis or mid-sentence.
+        8. Current Target: {machine_id}
         """
         
         # Cloud Inference
-        response = self._get_cloud_inference(system_prompt, query)
+        response = self._get_cloud_inference(system_prompt, query, max_tokens=700)
         
         # Log this interaction to SQL
         from src.data.database import log_agent_interaction
@@ -417,7 +432,7 @@ class MaintenanceAgent:
 
         # Fallback to Groq
         print(f"--- [GROQ] Reasoning ---")
-        return self._get_cloud_inference(system_prompt, user_content)
+        return self._get_cloud_inference(system_prompt, user_content, max_tokens=350)
 
     def speech_to_text(
         self,
@@ -566,16 +581,42 @@ class MaintenanceAgent:
         except Exception as e:
             return f"Error: {e}"
 
-    def _get_cloud_inference(self, system_prompt, user_content) -> str:
+    def _response_looks_incomplete(self, text: str) -> bool:
+        if not text:
+            return True
+        stripped = text.strip()
+        if len(stripped) < 80:
+            return True
+        if stripped.endswith(("...", "…", "-", "•", ":", "**")):
+            return True
+        if stripped[-1].isalnum():
+            return True
+        return False
+
+    def _get_cloud_inference(self, system_prompt, user_content, max_tokens: int = 250) -> str:
         if self.groq_client:
             try:
                 response = self.groq_client.chat.completions.create(
                     messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_content}],
                     model=self.groq_model,
-                    max_tokens=100, # Strict limit to conserve tokens
+                    max_tokens=max_tokens,
                     temperature=0.2
                 )
-                return response.choices[0].message.content
+                content = response.choices[0].message.content
+                if self._response_looks_incomplete(content) and max_tokens >= 500:
+                    retry = self.groq_client.chat.completions.create(
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": f"{user_content}\n\nReturn a complete final answer. Finish all sections cleanly."}
+                        ],
+                        model=self.groq_model,
+                        max_tokens=max_tokens,
+                        temperature=0.2
+                    )
+                    retry_content = retry.choices[0].message.content
+                    if retry_content:
+                        content = retry_content
+                return content
             except Exception as e:
                 print(f"Groq Error: {e}. Attempting local Ollama fallback...")
         
@@ -585,11 +626,27 @@ class MaintenanceAgent:
                 "model": self.local_model,
                 "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_content}],
                 "stream": False,
-                "options": {"num_predict": 100, "temperature": 0.2}
+                "options": {"num_predict": max_tokens, "temperature": 0.2}
             }
             response = requests.post(f"{self.ollama_base_url}/chat", json=payload, timeout=10)
             if response.status_code == 200:
-                return response.json().get("message", {}).get("content", "Error: Empty Ollama response.")
+                content = response.json().get("message", {}).get("content", "Error: Empty Ollama response.")
+                if self._response_looks_incomplete(content) and max_tokens >= 500:
+                    retry_payload = {
+                        "model": self.local_model,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": f"{user_content}\n\nReturn a complete final answer. Finish all sections cleanly."}
+                        ],
+                        "stream": False,
+                        "options": {"num_predict": max_tokens, "temperature": 0.2}
+                    }
+                    retry_response = requests.post(f"{self.ollama_base_url}/chat", json=retry_payload, timeout=10)
+                    if retry_response.status_code == 200:
+                        retry_content = retry_response.json().get("message", {}).get("content", "")
+                        if retry_content:
+                            content = retry_content
+                return content
             return f"Error: Local AI offline (Status {response.status_code})"
         except Exception as e:
             return f"Sovereign Error: All inference engines offline. {str(e)}"
@@ -638,7 +695,7 @@ class MaintenanceAgent:
                 Provide a 1-sentence technical justification for the maintenance priority.
                 Keep it under 20 words.
                 """
-                ai_reason = self._get_cloud_inference("You are a senior maintenance engineer.", prompt)
+                ai_reason = self._get_cloud_inference("You are a senior maintenance engineer.", prompt, max_tokens=80)
             else:
                 ai_reason = "Routine monitoring based on standard schedule."
 
@@ -651,7 +708,7 @@ class MaintenanceAgent:
             
             if not existing_task and is_critical:
                 prioritized.append({
-                    "id": f"ai-gen-{eq['id']}-{int(time.time())}",
+                    "id": f"ai-gen-{eq['id']}",
                     "machineId": eq['id'],
                     "machineName": eq['name'],
                     "title": f"Urgent Diagnostic: {eq['name']}",

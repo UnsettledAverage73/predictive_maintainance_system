@@ -1,6 +1,6 @@
 import { MaintenanceTask } from "@/types";
 import { cn } from "@/lib/utils";
-import { CheckCircle, Play, Clock, User, HardDrive, Bot, Info } from "lucide-react";
+import { CheckCircle, Play, Clock, HardDrive, Bot } from "lucide-react";
 
 interface TaskCardProps {
   task: MaintenanceTask;
@@ -9,6 +9,13 @@ interface TaskCardProps {
 }
 
 export function TaskCard({ task, className, onUpdate }: TaskCardProps) {
+  const assignee = task.assigned_to || task.assignedTo || 'Unassigned';
+  const assigneeInitial = assignee.charAt(0).toUpperCase() || '?';
+  const assigneeLabel = assignee.split(' ')[0] || 'Unassigned';
+  const dueDate = task.due_date || task.dueDate;
+  const machineName = task.machine_name || task.machineName || task.machine_id || task.machineId;
+  const taskName = task.task_name || task.title || 'Untitled Task';
+
   const getStatusColor = (status: MaintenanceTask['status']) => {
     switch (status) {
       case 'completed': return 'text-[var(--color-success)] border-[var(--color-success)]/30 bg-[var(--color-success)]/10';
@@ -55,7 +62,7 @@ export function TaskCard({ task, className, onUpdate }: TaskCardProps) {
         <div className="flex flex-col gap-1.5 min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-[10px] font-mono text-[var(--color-muted)] shrink-0">
-              <HardDrive className="w-3 h-3" /> {task.machine_name}
+              <HardDrive className="w-3 h-3" /> {machineName}
             </div>
             <span className={cn(
               "text-[9px] uppercase font-bold px-2 py-0.5 rounded-full border leading-none tracking-wider whitespace-nowrap",
@@ -74,7 +81,7 @@ export function TaskCard({ task, className, onUpdate }: TaskCardProps) {
           </div>
           <h4 className="font-bold text-base text-[var(--color-foreground)] flex items-center gap-2 mt-1 truncate">
             <span className="text-xl shrink-0">{getTaskIcon(task.task_type)}</span>
-            <span className="truncate">{task.task_name}</span>
+            <span className="truncate">{taskName}</span>
           </h4>
         </div>
 
@@ -119,7 +126,7 @@ export function TaskCard({ task, className, onUpdate }: TaskCardProps) {
 
       {task.notes && (
         <div className="text-xs text-[var(--color-muted)] italic bg-white/5 p-2.5 rounded-xl border-l-2 border-[var(--color-border)] pl-3">
-          "{task.notes}"
+          &quot;{task.notes}&quot;
         </div>
       )}
 
@@ -127,13 +134,13 @@ export function TaskCard({ task, className, onUpdate }: TaskCardProps) {
         <div className="flex gap-4 items-center">
           <div className="flex items-center gap-1.5 text-[var(--color-muted)] group-hover:text-slate-300 transition-colors">
             <Clock className="w-3.5 h-3.5" />
-            <span className="text-[10px] font-bold font-mono tracking-tight uppercase">{new Date(task.due_date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+            <span className="text-[10px] font-bold font-mono tracking-tight uppercase">{new Date(dueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
           </div>
           <div className="flex items-center gap-1.5 text-[var(--color-muted)] group-hover:text-slate-300 transition-colors">
             <div className="w-5 h-5 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-[9px] font-bold shadow-sm">
-              {task.assigned_to.charAt(0)}
+              {assigneeInitial}
             </div>
-            <span className="text-[10px] font-bold font-mono tracking-tight uppercase">{task.assigned_to.split(' ')[0]}</span>
+            <span className="text-[10px] font-bold font-mono tracking-tight uppercase">{assigneeLabel}</span>
           </div>
         </div>
 

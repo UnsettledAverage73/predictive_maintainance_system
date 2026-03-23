@@ -4,17 +4,45 @@ import { use, useState, useEffect } from "react";
 import Link from "next/link";
 import dynamic from 'next/dynamic';
 import { 
-  ChevronRight, MessageSquare, Plus, FileDown, 
-  Settings2, Upload, Activity, Zap, Loader2 
+  Settings2, Upload, Activity, Zap, Loader2, AlertTriangle
 } from "lucide-react";
 import { ProtocolBadge } from "@/components/machines/ProtocolBadge";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { RiskBadge } from "@/components/ui/RiskBadge";
-import { AgentPanel } from "@/components/agents/AgentPanel";
+import { MachineAgentChat } from "@/components/agents/MachineAgentChat";
 import { MaintenanceTable } from "@/components/machines/MaintenanceTable";
+import { MachineInsightsGrid } from "@/components/machines/MachineInsightsGrid";
 import { api } from "@/lib/api";
-import { Machine, TelemetryPoint, MaintenanceTask } from "@/types";
+import { Machine, TelemetryPoint, MaintenanceTask, MachineInsights } from "@/types";
 import { cn } from "@/lib/utils";
+
+interface ParameterView {
+  id: number | string;
+  displayName: string;
+  display_name?: string;
+  unit?: string;
+  normalMin?: number;
+  normal_min?: number;
+  normalMax?: number;
+  normal_max?: number;
+  warningThreshold?: number;
+  warning_threshold?: number;
+  criticalThreshold?: number;
+  critical_threshold?: number;
+  direction?: 'above' | 'below';
+  lastValue?: number | string;
+  isVisible?: boolean;
+  is_visible?: boolean;
+}
+
+interface ManualHistoryRow {
+  id: number;
+  equipment_id: string;
+  timestamp: string;
+  operator_name?: string;
+  action_taken: string;
+  parts_replaced?: string;
+}
 
 const TelemetryChart = dynamic(() => import('@/components/charts/TelemetryChart').then(mod => mod.TelemetryChart), { 
   ssr: false,
@@ -26,26 +54,29 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
   const idStr = resolvedParams.id;
 
   const [machine, setMachine] = useState<Machine | null>(null);
-  const [parameters, setParameters] = useState<any[]>([]);
+  const [parameters, setParameters] = useState<ParameterView[]>([]);
   const [telemetry, setTelemetry] = useState<TelemetryPoint[]>([]);
   const [logs, setLogs] = useState<MaintenanceTask[]>([]);
+  const [insights, setInsights] = useState<MachineInsights | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isMitigating, setIsMitigating] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [equipment, telemetryData, historyData, paramData] = await Promise.all([
+        const [equipment, telemetryData, historyData, paramData, insightData] = await Promise.all([
           api.getEquipment().then(list => list.find((m: Machine) => m.id === idStr)),
           api.getMachineTelemetry(idStr),
           api.getMachineHistory(idStr),
-          api.getMachineParameters(idStr)
+          api.getMachineParameters(idStr),
+          api.getMachineInsights(idStr)
         ]);
         
         if (equipment) setMachine(equipment);
         setParameters(paramData || []);
         setTelemetry(telemetryData);
-        setLogs(historyData.map((l: any) => ({
+        setInsights(insightData);
+        setLogs((historyData as ManualHistoryRow[]).map((l) => ({
           id: l.id.toString(),
           machineId: l.equipment_id,
           machineName: equipment?.name || idStr,
@@ -104,6 +135,9 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
     );
   }
 
+  const healthScore = machine.healthScore ?? Math.max(0, 100 - machine.riskScore);
+  const minutesToFailure = machine.minutesToFailure ?? null;
+
   return (
     <div className="flex flex-col gap-6 animate-in fade-in duration-500 pb-20">
       {/* Dynamic Header */}
@@ -149,7 +183,7 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
           
           {/* Dynamic Parameter Grid */}
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
-            {parameters.filter(p => p.isVisible).map(param => (
+            {parameters.filter((p) => p.isVisible ?? p.is_visible).map((param) => (
               <ParameterCard key={param.id} parameter={param} />
             ))}
           </div>
@@ -173,6 +207,20 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
               )}
             </div>
           </div>
+
+          {insights ? (
+            <MachineInsightsGrid insights={insights} />
+          ) : (
+            <div className="glass-panel rounded-2xl p-5 border border-white/10 flex items-start gap-4">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-amber-300" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-white">Machine intelligence is not available yet.</p>
+                <p className="text-sm text-[var(--color-muted)] mt-1">Cost, threat, incident, and wear insights will appear here once the backend payload is available.</p>
+              </div>
+            </div>
+          )}
 
           <div className="glass-panel rounded-xl">
             <div className="p-4 border-b border-[var(--color-border)]">
@@ -206,10 +254,10 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
               <div className="pt-2 border-t border-[var(--color-border)]">
                 <div className="flex justify-between text-xs mb-1">
                   <span className="text-[var(--color-muted)]">Health Index</span>
-                  <span className="font-bold text-[var(--color-primary)]">{machine.healthScore}%</span>
+                  <span className="font-bold text-[var(--color-primary)]">{healthScore}%</span>
                 </div>
                 <div className="w-full bg-[var(--color-border)] rounded-full h-1.5 overflow-hidden">
-                  <div className="bg-[var(--color-primary)] h-full transition-all duration-1000" style={{ width: `${machine.healthScore}%` }} />
+                  <div className="bg-[var(--color-primary)] h-full transition-all duration-1000" style={{ width: `${healthScore}%` }} />
                 </div>
               </div>
             </div>
@@ -224,38 +272,43 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
             </div>
             <div className="p-3 bg-[var(--color-destructive)]/5 border border-[var(--color-destructive)]/20 rounded-lg">
               <span className="text-[10px] text-[var(--color-destructive)] font-bold uppercase block mb-1">Est. Time to Failure</span>
-              <span className="text-xl font-bold font-mono">{machine.minutesToFailure}m</span>
+              <span className="text-xl font-bold font-mono">{minutesToFailure !== null ? `${minutesToFailure}m` : 'Stable'}</span>
             </div>
           </div>
 
           {/* Machine AI Agent */}
-          <AgentPanel analysis="Orchestrator monitoring active. Analyzing telemetry streams for cross-parameter anomalies..." confidence={94.2} />
+          <MachineAgentChat machineId={idStr} machineName={machine.name} />
         </div>
       </div>
     </div>
   );
 }
 
-function ParameterCard({ parameter }: { parameter: any }) {
-  const baseValue = (parameter.normalMin + (parameter.normalMax - parameter.normalMin) * 0.5);
+function ParameterCard({ parameter }: { parameter: ParameterView }) {
+  const normalMin = parameter.normalMin ?? parameter.normal_min ?? 0;
+  const normalMax = parameter.normalMax ?? parameter.normal_max ?? 0;
+  const warningThreshold = parameter.warningThreshold ?? parameter.warning_threshold ?? 0;
+  const criticalThreshold = parameter.criticalThreshold ?? parameter.critical_threshold ?? 0;
+  const displayName = parameter.displayName || parameter.display_name || 'Parameter';
+  const baseValue = (normalMin + (normalMax - normalMin) * 0.5);
   const value = parameter.lastValue !== undefined ? parameter.lastValue : baseValue.toFixed(1);
   
   let statusColor = "bg-[var(--color-success)]";
   const numValue = parseFloat(value);
   
   if (parameter.direction === 'above') {
-    if (numValue >= parameter.criticalThreshold) statusColor = "bg-[var(--color-destructive)] shadow-[0_0_8px_var(--color-destructive)]";
-    else if (numValue >= parameter.warningThreshold) statusColor = "bg-[var(--color-warning)] shadow-[0_0_8px_var(--color-warning)]";
+    if (numValue >= criticalThreshold) statusColor = "bg-[var(--color-destructive)] shadow-[0_0_8px_var(--color-destructive)]";
+    else if (numValue >= warningThreshold) statusColor = "bg-[var(--color-warning)] shadow-[0_0_8px_var(--color-warning)]";
   } else {
-    if (numValue <= parameter.criticalThreshold) statusColor = "bg-[var(--color-destructive)] shadow-[0_0_8px_var(--color-destructive)]";
-    else if (numValue <= parameter.warningThreshold) statusColor = "bg-[var(--color-warning)] shadow-[0_0_8px_var(--color-warning)]";
+    if (numValue <= criticalThreshold) statusColor = "bg-[var(--color-destructive)] shadow-[0_0_8px_var(--color-destructive)]";
+    else if (numValue <= warningThreshold) statusColor = "bg-[var(--color-warning)] shadow-[0_0_8px_var(--color-warning)]";
   }
 
   return (
     <div className="glass-panel p-3 rounded-xl border-l-4 border-l-[var(--color-border)] hover:border-l-[var(--color-primary)] transition-all group cursor-help">
       <div className="flex items-center justify-between mb-1">
         <span className="text-[9px] uppercase font-bold tracking-widest text-[var(--color-muted)] group-hover:text-[var(--color-primary)] transition-colors truncate pr-1">
-          {parameter.displayName}
+          {displayName}
         </span>
         <div className={cn("w-1.5 h-1.5 rounded-full shrink-0", statusColor)} />
       </div>

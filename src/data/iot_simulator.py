@@ -3,6 +3,7 @@ import time
 import random
 import os
 import sqlite3
+from datetime import datetime
 
 # --- CONFIGURATION: SOVEREIGN IPC ---
 IPC_FILE = os.path.join("data", "iot_stream.json")
@@ -108,6 +109,32 @@ def simulate_sensors():
             with open(temp_path, "w") as f:
                 json.dump(readings, f)
             os.replace(temp_path, IPC_FILE)
+
+            # 4. PERSIST TO DATABASE
+            try:
+                conn = sqlite3.connect(DB_PATH)
+                cursor = conn.cursor()
+                iso_ts = datetime.now().isoformat()
+                
+                for r in readings:
+                    # Legacy sensor_readings
+                    temp = r.get('temperature', 0)
+                    vib = r.get('vibration', 0)
+                    cursor.execute(
+                        "INSERT INTO sensor_readings (equipment_id, timestamp, temperature, vibration) VALUES (?, ?, ?, ?)",
+                        (r['equipment_id'], iso_ts, temp, vib)
+                    )
+                    
+                    # New telemetry_readings
+                    for key, val in r['parameters'].items():
+                        cursor.execute(
+                            "INSERT INTO telemetry_readings (machine_id, parameter_key, value, timestamp) VALUES (?, ?, ?, ?)",
+                            (r['equipment_id'], key, val, iso_ts)
+                        )
+                conn.commit()
+                conn.close()
+            except Exception as e:
+                print(f"Database Persistence Error: {e}")
 
             time.sleep(2)
 

@@ -7,6 +7,27 @@ import { MaintenanceTask } from "@/types";
 import { Filter, Calendar as CalendarIcon, Bot, Clock, AlertTriangle, Play, CheckCircle } from "lucide-react";
 import { api, buildWebSocketUrl } from '@/lib/api';
 
+const normalizeTask = (task: Partial<MaintenanceTask>): MaintenanceTask => {
+  const assignedTo = task.assigned_to ?? task.assignedTo ?? 'Unassigned';
+  const dueDate = task.due_date ?? task.dueDate ?? new Date().toISOString();
+  const machineId = task.machine_id ?? task.machineId ?? '';
+  const machineName = task.machine_name ?? task.machineName ?? (machineId || 'Unknown Machine');
+  const taskName = task.task_name ?? task.title ?? 'Untitled Task';
+
+  return {
+    ...task,
+    id: task.id ?? `task-${Date.now()}`,
+    machine_id: machineId,
+    machine_name: machineName,
+    task_name: taskName,
+    task_type: task.task_type ?? 'inspection',
+    status: task.status ?? 'pending',
+    due_date: dueDate,
+    assigned_to: assignedTo,
+    created_at: task.created_at ?? task.createdAt ?? new Date().toISOString(),
+  } as MaintenanceTask;
+};
+
 export default function SchedulePage() {
   const [tasks, setTasks] = useState<MaintenanceTask[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -17,7 +38,7 @@ export default function SchedulePage() {
       setIsLoading(true);
       try {
         const response = await api.getSchedule(true);
-        setTasks(response);
+        setTasks(response.map(normalizeTask));
         setIsLoading(false);
       } catch (error) {
         console.error("Failed to fetch schedule:", error);
@@ -32,7 +53,7 @@ export default function SchedulePage() {
     const ws = new WebSocket(wsUrl);
 
     ws.onmessage = (event) => {
-      const updatedTask = JSON.parse(event.data);
+      const updatedTask = normalizeTask(JSON.parse(event.data));
       setTasks(prev => {
         const exists = prev.find(t => t.id === updatedTask.id);
         if (exists) {
@@ -48,7 +69,7 @@ export default function SchedulePage() {
     return () => ws.close();
   }, []);
 
-  const onUpdateTask = async (taskId: number, status: string) => {
+  const onUpdateTask = async (taskId: number | string, status: string) => {
     try {
       await api.updateTask(taskId, { status });
       // The state will be updated via WebSocket message
@@ -85,7 +106,7 @@ export default function SchedulePage() {
               setIsLoading(true);
               api.getSchedule(true)
                 .then(res => {
-                  setTasks(res);
+                  setTasks(res.map(normalizeTask));
                   setIsLoading(false);
                 })
                 .catch(error => {
