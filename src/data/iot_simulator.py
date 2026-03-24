@@ -37,6 +37,7 @@ def simulate_sensors():
 
     # Initial Machine Load (1.0 = 100% capacity)
     load_factors = {}
+    active_anomalies = {} # (eq_id, param_key) -> [value, cycles_remaining]
     
     try:
         while True:
@@ -58,7 +59,13 @@ def simulate_sensors():
                             print(f"!!! [AUTO-MITIGATION] Throttling {target} !!!")
                         elif cmd.get("action") == "RESET_LOAD":
                             load_factors[target] = 1.0
+                            active_anomalies.pop((target, "temperature"), None)
                             print(f"✅ [RECOVERY] {target} restored.")
+                        elif cmd.get("action") == "TRIGGER_ANOMALY":
+                            param = cmd.get("parameter", "temperature")
+                            value = cmd.get("value", 125.0)
+                            active_anomalies[(target, param)] = [value, 10] # Persistent for 10 cycles
+                            print(f"⚠️ [SIMULATOR] Injecting PERSISTENT ANOMALY: {target} {param}={value}")
                     os.remove(COMMAND_FILE)
                 except: pass
 
@@ -77,24 +84,32 @@ def simulate_sensors():
                 # Simulate each parameter
                 for p in eq_data['parameters']:
                     key = p['parameter_key']
-                    n_min = p['normal_min'] or 0
-                    n_max = p['normal_max'] or 100
                     
-                    # Logic: Scale value by load factor within the normal range
-                    # Add some stochastic noise
-                    range_width = n_max - n_min
-                    base_val = n_min + (range_width * 0.7 * current_load) 
-                    
-                    # Random jitter
-                    jitter = random.uniform(-range_width * 0.05, range_width * 0.05)
-                    val = base_val + jitter
-
-                    # Injection of Anomaly
-                    if current_load > 0.8 and random.random() < 0.05:
-                        if p['direction'] == 'above':
-                            val += range_width * 0.4
+                    # Check for active manual anomaly injection
+                    if (eq_id, key) in active_anomalies:
+                        val, cycles = active_anomalies[(eq_id, key)]
+                        if cycles > 1:
+                            active_anomalies[(eq_id, key)][1] -= 1
                         else:
-                            val -= range_width * 0.4
+                            active_anomalies.pop((eq_id, key))
+                    else:
+                        n_min = p['normal_min'] or 0
+                        n_max = p['normal_max'] or 100
+                        
+                        # Logic: Scale value by load factor within the normal range
+                        range_width = n_max - n_min
+                        base_val = n_min + (range_width * 0.7 * current_load) 
+                        
+                        # Random jitter
+                        jitter = random.uniform(-range_width * 0.05, range_width * 0.05)
+                        val = base_val + jitter
+
+                        # Injection of Stochastic Anomaly
+                        if current_load > 0.8 and random.random() < 0.05:
+                            if p['direction'] == 'above':
+                                val += range_width * 0.4
+                            else:
+                                val -= range_width * 0.4
 
                     # Specialized logic for temperature/vibration legacy fields
                     if key == 'temperature': machine_payload['temperature'] = round(val, 2)

@@ -175,6 +175,8 @@ def _build_threat_detection(machine_id: str) -> Dict[str, Any]:
         "evidence": evidence[:5],
         "recommendedAction": "Replace the affected component during the next planned maintenance window.",
         "riskLabel": "critical" if confidence >= 80 else ("high" if confidence >= 60 else "medium"),
+        "vibThreshold": _safe_float(statuses.get("vibration_rms", {}).get("warningThreshold"), 4.5),
+        "tempThreshold": _safe_float(statuses.get("temperature", {}).get("warningThreshold"), 100.0),
     }
 
 

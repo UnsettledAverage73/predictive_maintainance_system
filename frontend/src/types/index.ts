@@ -33,6 +33,13 @@ export interface MaintenanceTask {
   completed_at?: string;
   notes?: string;
   aiReason?: string;
+  vibration?: number;
+  temperature?: number;
+  vibThreshold?: number;
+  tempThreshold?: number;
+  failureMode?: string;
+  maintenanceAction?: string;
+  failureProbability?: number;
   created_at: string;
   machineId?: string;
   machineName?: string;

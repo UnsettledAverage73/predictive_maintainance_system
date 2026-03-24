@@ -1,1 +1,1 @@
-[{"equipment_id": "CNC001", "action": "SHUTDOWN_IMMEDIATE", "reason": "Predicted Harmonic Resonance Detected", "timestamp": 1774330512.7415245}, {"equipment_id": "CNC002", "action": "REROUTE_WORKLOAD", "source_id": "CNC001", "timestamp": 1774330512.7415297}]
+{"equipment_id": "CNC001", "action": "TRIGGER_ANOMALY", "parameter": "temperature", "value": 125.0, "timestamp": "2026-03-24T14:38:31.258150"}

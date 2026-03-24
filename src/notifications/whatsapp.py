@@ -55,18 +55,24 @@ def send_whatsapp_alert(
         f"Reason: {reason}\n\n"
         f"AI Prescription:\n{prescription}\n"
     )
+    # If content_sid is set, use template. Otherwise use raw body.
+    # Note: HX87fabadde444f49ee23d35e1486d0849 might expect different variables than 1,2,3,4
     content_sid = os.getenv("TWILIO_WHATSAPP_CONTENT_SID", "").strip()
-    content_variables = json.dumps(
-        {
+    
+    # Temporarily disabling template to ensure delivery while debugging variables
+    use_template = False 
+    
+    variables = {
             "1": equipment_id,
             "2": severity,
             "3": reason,
             "4": prescription,
         }
-    )
+    content_variables = json.dumps(variables)
 
     try:
-        if content_sid:
+        if content_sid and use_template:
+            print(f"--- [TWILIO] Sending with Template SID: {content_sid}")
             message = client.messages.create(
                 from_=TWILIO_SANDBOX_NUMBER,
                 to=to_whatsapp,
@@ -74,6 +80,7 @@ def send_whatsapp_alert(
                 content_variables=content_variables,
             )
         else:
+            print(f"--- [TWILIO] Sending Standard Body Message to {to_whatsapp}")
             message = client.messages.create(
                 body=message_body,
                 from_=TWILIO_SANDBOX_NUMBER,

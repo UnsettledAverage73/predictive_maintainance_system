@@ -61,6 +61,7 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
   const [insights, setInsights] = useState<MachineInsights | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isMitigating, setIsMitigating] = useState(false);
+  const [isTriggering, setIsTriggering] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -126,6 +127,18 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
     }
   };
 
+  const handleTriggerAnomaly = async () => {
+    setIsTriggering(true);
+    try {
+      await api.triggerAnomaly(idStr);
+      console.log("Anomaly trigger dispatched: Critical temperature spike.");
+    } catch (error) {
+      console.error("Anomaly trigger failed:", error);
+    } finally {
+      setIsTriggering(false);
+    }
+  };
+
   if (isLoading || !machine) {
     return (
       <div className="flex h-[60vh] items-center justify-center">
@@ -175,6 +188,14 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
           >
             <FileText className="w-4 h-4" /> Detailed Report
           </Link>
+          <button 
+            onClick={handleTriggerAnomaly}
+            disabled={isTriggering}
+            className="bg-amber-500/10 border border-amber-500/50 text-amber-500 px-4 py-2 rounded-lg text-sm font-bold hover:bg-amber-500/20 transition-all flex items-center gap-2"
+          >
+            {isTriggering ? <Loader2 className="w-4 h-4 animate-spin" /> : <Activity className="w-4 h-4" />}
+            Trigger Test Alert
+          </button>
           <button 
             onClick={handleMitigate}
             disabled={isMitigating}

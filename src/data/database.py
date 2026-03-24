@@ -120,6 +120,12 @@ def init_db():
     try:
         cursor.execute("ALTER TABLE equipment ADD COLUMN machine_class TEXT")
     except sqlite3.OperationalError: pass
+    try:
+        cursor.execute("ALTER TABLE equipment ADD COLUMN is_bottleneck BOOLEAN DEFAULT 0")
+    except sqlite3.OperationalError: pass
+    try:
+        cursor.execute("ALTER TABLE equipment ADD COLUMN quality_impact_score REAL DEFAULT 0.0")
+    except sqlite3.OperationalError: pass
 
     # 5. Maintenance Schedule: Task management
     cursor.execute('''
@@ -482,14 +488,15 @@ def seed_initial_data():
 
     if count == 0:
         print("--- [SEEDING] Initializing Default Industrial Assets ---")
+        # id, name, line, protocol, is_bottleneck, quality_impact_score
         initial_machines = [
-            ("CNC001", "Precision CNC Lathe Alpha", "Line 1 - Machining", "MQTT"),
-            ("CONV01", "Main Assembly Conveyor", "Line 2 - Assembly", "OPC-UA"),
-            ("HYD005", "High-Pressure Hydraulic Press", "Line 1 - Machining", "Modbus"),
-            ("EXT002", "Polymer Extrusion Line", "Line 3 - Packaging", "MQTT")
+            ("CNC001", "Precision CNC Lathe Alpha", "Line 1 - Machining", "MQTT", 1, 0.9),
+            ("CONV01", "Main Assembly Conveyor", "Line 2 - Assembly", "OPC-UA", 1, 0.2),
+            ("HYD005", "High-Pressure Hydraulic Press", "Line 1 - Machining", "Modbus", 0, 0.7),
+            ("EXT002", "Polymer Extrusion Line", "Line 3 - Packaging", "MQTT", 0, 0.4)
         ]
-        for eq_id, name, line, protocol in initial_machines:
-            add_equipment(eq_id, name, line, protocol)
+        for eq_id, name, line, protocol, is_bottleneck, quality_impact in initial_machines:
+            add_equipment(eq_id, name, line, protocol, is_bottleneck=is_bottleneck, quality_impact_score=quality_impact)
             seed_common_parameters(eq_id)
             # Add some machine-specific parameters too
             if eq_id == "CNC001":
@@ -761,7 +768,7 @@ def seed_priority_scheduling_data():
     conn.commit()
     conn.close()
 
-def add_equipment(eq_id, name, line, protocol, agent_id=None, machine_class='Generic Industrial'):
+def add_equipment(eq_id, name, line, protocol, agent_id=None, machine_class='Generic Industrial', is_bottleneck=0, quality_impact_score=0.0):
     """
     Onboards a new physical asset into the Sovereign Matrix.
     """
@@ -769,15 +776,17 @@ def add_equipment(eq_id, name, line, protocol, agent_id=None, machine_class='Gen
     cursor = conn.cursor()
     try:
         cursor.execute("""
-            INSERT OR REPLACE INTO equipment (id, name, production_line, protocol, agent_id, last_maintenance_date, next_scheduled_date, mtbf, machine_class)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO equipment (id, name, production_line, protocol, agent_id, last_maintenance_date, next_scheduled_date, mtbf, machine_class, is_bottleneck, quality_impact_score)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             eq_id, name, line, protocol, 
             agent_id or f"agt-{eq_id}", 
             datetime.now().date().isoformat(),
             (datetime.now() + timedelta(days=90)).date().isoformat(),
             5000,
-            machine_class
+            machine_class,
+            is_bottleneck,
+            quality_impact_score
         ))
         conn.commit()
         return True
@@ -812,6 +821,16 @@ def get_all_equipment_metadata():
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
+
+def get_equipment_metadata(machine_id):
+    """Retrieves metadata for a specific machine."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM equipment WHERE id = ?", (machine_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
 
 
 def log_manual_repair(eq_id, operator, action, parts="None", alert_id=None):

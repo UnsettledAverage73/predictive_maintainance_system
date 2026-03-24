@@ -718,62 +718,12 @@ async def chat_vision(
     query = f"User Prompt: {prompt}\nContext from Images: {vision_context}"
     result = await agent.get_orchestrator_response(query=query, machine_id=machineId, session_id=sessionId)
     return {
-        "visual_context": vision_context, 
-        "message": result["message"], 
-        "sources": result["sources"], 
-        "confidence": result["confidence"], 
+        "visual_context": vision_context,
+        "message": result["message"],
+        "sources": result["sources"],
+        "confidence": result["confidence"],
         "sessionId": sessionId,
         "image_count": len(files)
-    }
-    result = await agent.get_orchestrator_response(query=query, machine_id=machineId, session_id=sessionId)
-    return {
-        "visual_context": vision_context, 
-        "message": result["message"], 
-        "sources": result["sources"], 
-        "confidence": result["confidence"], 
-        "sessionId": sessionId,
-        "image_count": len(files)
-    }
-
-@app.get("/api/mitigation/history")
-async def get_mitigation_history(limit: int = 15):
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT h.*, e.name as machine_name, e.machine_class 
-        FROM agent_history h
-        JOIN equipment e ON h.machine_id = e.id
-        WHERE h.session_id = 'MITIGATION-ENGINE'
-        ORDER BY h.timestamp DESC
-        LIMIT ?
-    """, (limit,))
-    rows = [dict(row) for row in cursor.fetchall()]
-    conn.close()
-    return rows
-
-@app.get("/api/mitigation/stats")
-async def get_mitigation_stats():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    # 1. Downtime Avoided (Heuristic: 210 mins per reroute)
-    cursor.execute("SELECT COUNT(*) FROM agent_history WHERE session_id = 'MITIGATION-ENGINE' AND content LIKE '%rerouted%'")
-    reroute_count = cursor.fetchone()[0]
-    
-    # 2. Cost Saved (Heuristic: 85,000 INR per reroute)
-    total_savings = reroute_count * 85000
-    
-    # 3. Active Reroutes
-    cursor.execute("SELECT id, name, machine_class FROM equipment WHERE status = 'peak_load' OR status = 'maintenance'")
-    active_machines = cursor.fetchall()
-    
-    conn.close()
-    return {
-        "rerouteCount": reroute_count,
-        "downtimeAvoidedMins": reroute_count * 210,
-        "totalSavingsInr": total_savings,
-        "activeMitigations": len(active_machines) // 2 # Rough pair count
     }
 
 @app.get("/api/factory/stats")
@@ -828,6 +778,22 @@ async def mitigate_risk(equipment_id: str):
     command = {"equipment_id": equipment_id, "action": "THROTTLE_LOAD", "value": 0.5, "timestamp": datetime.now().isoformat()}
     with open(COMMAND_FILE, "w") as f: json.dump(command, f)
     return {"status": "Command Dispatched", "action": "Load Reduction Active"}
+
+class TriggerAnomalyRequest(BaseModel):
+    parameter: Optional[str] = "temperature"
+    value: Optional[float] = 125.0
+
+@app.post("/api/equipment/{equipment_id}/trigger_anomaly")
+async def trigger_anomaly(equipment_id: str, request: TriggerAnomalyRequest):
+    command = {
+        "equipment_id": equipment_id, 
+        "action": "TRIGGER_ANOMALY", 
+        "parameter": request.parameter,
+        "value": request.value,
+        "timestamp": datetime.now().isoformat()
+    }
+    with open(COMMAND_FILE, "w") as f: json.dump(command, f)
+    return {"status": "Anomaly Triggered", "equipment_id": equipment_id, "parameter": request.parameter, "value": request.value}
 
 class CSVConfirmRequest(BaseModel):
     confirmed_mappings: List[dict] # {csv_col: str, parameter_key: str}

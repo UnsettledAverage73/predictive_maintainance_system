@@ -263,12 +263,6 @@ async def run_ingestor():
                                 analysis = orchestrator_result["message"]
                                 create_ai_alert(eq_id, severity, reason, analysis)
                                 
-                                # 3.1 AUTONOMOUS MITIGATION: If severity is CRITICAL, trigger Rerouting
-                                if severity == "CRITICAL" and os.getenv("AUTO_MITIGATION_ENABLED", "true") == "true":
-                                    mitigation = agent.mitigate_failure(eq_id, reason)
-                                    print(f"⚡ [AUTONOMOUS MITIGATION] {mitigation['message']}")
-                                    analysis += f"\n\n**AUTONOMOUS MITIGATION ACTIVATED:** {mitigation['message']}"
-
                                 # 4. ZERO-LATENCY CACHING: Store the latest summary in Redis for the dashboard
                                 cache_key = f"ai_latest_summary:{eq_id}"
                                 summary_data = {
