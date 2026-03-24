@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Server, CalendarDays, Bell, MoreHorizontal, Settings, PlusCircle, Shield } from 'lucide-react';
+import { LayoutDashboard, Server, CalendarDays, Bell, MoreHorizontal, Settings, PlusCircle } from 'lucide-react';
 import { useState } from 'react';
 import { BottomSheet } from '@/components/ui/bottom-sheet';
 
@@ -15,7 +15,6 @@ const mainTabs = [
 
 const moreItems = [
   { icon: PlusCircle, label: 'Onboard Machine', href: '/dashboard/onboarding' },
-  { icon: Shield, label: 'Security', href: '/settings/security' },
   { icon: Settings, label: 'Settings', href: '/settings' },
 ];
 

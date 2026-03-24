@@ -13,6 +13,21 @@
   --color-success: #22C55E;
   --color-muted: var(--muted-color);
   
+  /* Redefine common colors as hex to avoid oklab/oklch parser issues with Turbopack */
+  --color-red-400: #F87171;
+  --color-red-500: #EF4444;
+  --color-red-600: #DC2626;
+  --color-amber-300: #FCD34D;
+  --color-amber-400: #FBBF24;
+  --color-amber-500: #F59E0B;
+  --color-blue-400: #60A5FA;
+  --color-blue-500: #3B82F6;
+  --color-blue-600: #2563EB;
+  --color-slate-400: #94A3B8;
+  --color-slate-500: #64748B;
+  --color-slate-800: #1E293B;
+  --color-slate-900: #0F172A;
+  
   --font-sans: var(--font-jakarta);
   --font-mono: var(--font-jetbrains);
 }
@@ -27,6 +42,16 @@
   --glass-bg: rgba(28, 33, 40, 0.7);
   --shadow-color: rgba(0, 0, 0, 0.28);
   --panel-highlight: rgba(255, 255, 255, 0.06);
+  
+  /* Static mixes to avoid CSS parser issues with color-mix in some environments */
+  --bg-mix-top: #0C1015;
+  --bg-mix-bottom: #0C0F17;
+  --primary-focus: #26D9B5;
+  --primary-selection: rgba(0, 212, 170, 0.35);
+  --card-mix-top: #2A2F35;
+  --border-muted: rgba(48, 54, 61, 0.88);
+  --scrollbar-thumb: rgba(139, 148, 158, 0.45);
+  --scrollbar-track: rgba(139, 148, 158, 0.6);
 }
 
 [data-theme="light"] {
@@ -39,6 +64,15 @@
   --glass-bg: rgba(255, 255, 255, 0.7);
   --shadow-color: rgba(15, 23, 42, 0.08);
   --panel-highlight: rgba(255, 255, 255, 0.8);
+  
+  --bg-mix-top: #E4E6E8;
+  --bg-mix-bottom: #E0E3E6;
+  --primary-focus: #26D9B5;
+  --primary-selection: rgba(0, 212, 170, 0.35);
+  --card-mix-top: #FFFFFF;
+  --border-muted: rgba(226, 232, 240, 0.88);
+  --scrollbar-thumb: rgba(100, 116, 139, 0.45);
+  --scrollbar-track: rgba(100, 116, 139, 0.6);
 }
 
 html {
@@ -49,7 +83,7 @@ body {
   background:
     radial-gradient(circle at top left, rgba(0, 212, 170, 0.12), transparent 30%),
     radial-gradient(circle at top right, rgba(59, 130, 246, 0.12), transparent 24%),
-    linear-gradient(180deg, color-mix(in srgb, var(--color-background) 92%, black) 0%, var(--color-background) 42%, color-mix(in srgb, var(--color-background) 90%, #020617) 100%);
+    linear-gradient(180deg, var(--bg-mix-top) 0%, var(--color-background) 42%, var(--bg-mix-bottom) 100%);
   color: var(--color-foreground);
   font-family: var(--font-sans), sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -82,12 +116,12 @@ select {
 }
 
 :focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--color-primary) 85%, white);
+  outline: 2px solid var(--primary-focus);
   outline-offset: 2px;
 }
 
 ::selection {
-  background: color-mix(in srgb, var(--color-primary) 35%, transparent);
+  background: var(--primary-selection);
 }
 
 .glass-panel {
@@ -101,8 +135,8 @@ select {
 
 .surface-card {
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-card) 94%, white) 0%, var(--color-card) 100%);
-  border: 1px solid color-mix(in srgb, var(--color-border) 88%, transparent);
+    linear-gradient(180deg, var(--card-mix-top) 0%, var(--color-card) 100%);
+  border: 1px solid var(--border-muted);
   box-shadow:
     inset 0 1px 0 var(--panel-highlight),
     0 20px 40px -28px var(--shadow-color);
@@ -127,7 +161,7 @@ select {
 
 .custom-scrollbar {
   scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--color-muted) 60%, transparent) transparent;
+  scrollbar-color: var(--scrollbar-track) transparent;
 }
 
 .custom-scrollbar::-webkit-scrollbar {
@@ -136,7 +170,7 @@ select {
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--color-muted) 45%, transparent);
+  background: var(--scrollbar-thumb);
   border-radius: 999px;
   border: 2px solid transparent;
   background-clip: padding-box;
@@ -209,4 +243,3 @@ select {
 .markdown-content h1 { font-size: 1.25rem; }
 .markdown-content h2 { font-size: 1.1rem; }
 .markdown-content h3 { font-size: 1rem; }
-

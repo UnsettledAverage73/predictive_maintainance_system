@@ -4,12 +4,13 @@ import { use, useState, useEffect } from "react";
 import Link from "next/link";
 import dynamic from 'next/dynamic';
 import { 
-  Settings2, Upload, Activity, Zap, Loader2, AlertTriangle
+  Settings2, Upload, Activity, Zap, Loader2, AlertTriangle, FileText
 } from "lucide-react";
 import { ProtocolBadge } from "@/components/machines/ProtocolBadge";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { RiskBadge } from "@/components/ui/RiskBadge";
 import { MachineAgentChat } from "@/components/agents/MachineAgentChat";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { MaintenanceTable } from "@/components/machines/MaintenanceTable";
 import { MachineInsightsGrid } from "@/components/machines/MachineInsightsGrid";
 import { api } from "@/lib/api";
@@ -65,18 +66,19 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
     const fetchData = async () => {
       try {
         const [equipment, telemetryData, historyData, paramData, insightData] = await Promise.all([
-          api.getEquipment().then(list => list.find((m: Machine) => m.id === idStr)),
-          api.getMachineTelemetry(idStr),
-          api.getMachineHistory(idStr),
-          api.getMachineParameters(idStr),
-          api.getMachineInsights(idStr)
+          api.getEquipment().then(list => list.find((m: Machine) => m.id === idStr)).catch(() => null),
+          api.getMachineTelemetry(idStr).catch(() => []),
+          api.getMachineHistory(idStr).catch(() => []),
+          api.getMachineParameters(idStr).catch(() => []),
+          api.getMachineInsights(idStr).catch(() => null)
         ]);
         
         if (equipment) setMachine(equipment);
         setParameters(paramData || []);
-        setTelemetry(telemetryData);
+        setTelemetry(telemetryData || []);
         setInsights(insightData);
-        setLogs((historyData as ManualHistoryRow[]).map((l) => ({
+        const safeHistory = Array.isArray(historyData) ? historyData : [];
+        setLogs(safeHistory.map((l: ManualHistoryRow) => ({
           id: l.id.toString(),
           machineId: l.equipment_id,
           machineName: equipment?.name || idStr,
@@ -166,6 +168,12 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
             className="bg-[var(--color-surface)] border border-[var(--color-border)] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[var(--color-border)]/50 transition-all flex items-center gap-2"
           >
             <Settings2 className="w-4 h-4" /> Manage Registry
+          </Link>
+          <Link
+            href={`/dashboard/reports/machine/${idStr}`}
+            className="bg-[var(--color-surface)] border border-[var(--color-border)] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[var(--color-border)]/50 transition-all flex items-center gap-2 text-[var(--color-primary)]"
+          >
+            <FileText className="w-4 h-4" /> Detailed Report
           </Link>
           <button 
             onClick={handleMitigate}
@@ -277,7 +285,9 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
           </div>
 
           {/* Machine AI Agent */}
-          <MachineAgentChat machineId={idStr} machineName={machine.name} />
+          <ErrorBoundary title="Agent Logic Failure">
+            <MachineAgentChat machineId={idStr} machineName={machine.name} />
+          </ErrorBoundary>
         </div>
       </div>
     </div>

@@ -1,8 +1,9 @@
 'use client';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { CloudOff, Filter, Search } from 'lucide-react';
+import { CloudOff, Filter, Search, Download, Loader2 } from 'lucide-react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { generatePDF } from '@/lib/reports';
 
 const MOCK_LOGS = Array.from({ length: 15 }).map((_, i) => ({
   id: `c-log-${i}`,
@@ -21,6 +22,13 @@ export default function CloudConnectLogsPage() {
   const filter = searchParams.get('severity') ?? 'ALL';
   const providerFilter = searchParams.get('provider') ?? 'ALL';
   const query = searchParams.get('q') ?? '';
+  const [isExporting, setIsExporting] = useState(false);
+
+  const handleExportPDF = async () => {
+    setIsExporting(true);
+    await generatePDF('logs-table', `Cloud_Connect_Logs_${new Date().toISOString().split('T')[0]}`);
+    setIsExporting(false);
+  };
 
   const updateParams = (updates: Record<string, string>) => {
     const nextParams = new URLSearchParams(searchParams.toString());
@@ -66,7 +74,14 @@ export default function CloudConnectLogsPage() {
           <h1 className="text-3xl font-bold text-white tracking-tight">Connection History Logs</h1>
         </div>
         <div className="flex space-x-3 items-center">
-          <button className="px-5 py-2.5 border border-[var(--color-border)] text-white bg-[var(--color-surface)] hover:bg-slate-800 rounded-md text-sm transition-colors shadow-sm font-medium">Export CSV</button>
+          <button 
+            onClick={handleExportPDF}
+            disabled={isExporting}
+            className="px-5 py-2.5 border border-[var(--color-border)] text-white bg-[var(--color-surface)] hover:bg-slate-800 rounded-md text-sm transition-colors shadow-sm font-medium flex items-center gap-2"
+          >
+            {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+            Export PDF
+          </button>
         </div>
       </div>
 
@@ -110,7 +125,7 @@ export default function CloudConnectLogsPage() {
         </div>
       </section>
 
-      <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl overflow-hidden shadow-xl min-h-[400px] flex flex-col">
+      <div id="logs-table" className="bg-[#030712] border border-[var(--color-border)] rounded-xl overflow-hidden shadow-xl min-h-[400px] flex flex-col">
         {filteredLogs.length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center p-12 relative overflow-hidden">
             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-slate-800/30 blur-[60px] rounded-full pointer-events-none" />

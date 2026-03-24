@@ -2,13 +2,13 @@
 
 import { useState, useEffect } from "react";
 import { TelemetryPoint } from "@/types";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceArea } from "recharts";
 import { buildWebSocketUrl } from "@/lib/api";
 
 interface TelemetryChartProps {
   data: TelemetryPoint[];
   machineId?: string;
-  parameters: any[]; // Pass registry here
+  parameters: any[];
   className?: string;
 }
 
@@ -77,8 +77,53 @@ export function TelemetryChart({ data: initialData, machineId, parameters, class
             <YAxis stroke="#8B949E" fontSize={11} />
             <Tooltip 
               contentStyle={{ backgroundColor: '#0D1117', borderColor: '#30363D', color: '#E6EDF3', borderRadius: '8px' }}
+              labelFormatter={(label) => new Date(label).toLocaleString()}
+              content={({ active, payload, label }) => {
+                if (active && payload && payload.length) {
+                  const dataPoint = payload[0].payload;
+                  return (
+                    <div className="bg-[#0D1117] border border-[#30363D] p-3 rounded-lg shadow-xl min-w-[200px]">
+                      <p className="text-[10px] text-[var(--color-muted)] mb-1 font-mono uppercase font-bold tracking-widest">
+                        {new Date(label).toLocaleString()}
+                      </p>
+                      
+                      {dataPoint.isAnomaly && (
+                        <div className="mb-2 p-2 bg-red-500/10 border border-red-500/20 rounded text-[11px]">
+                          <span className="text-red-400 font-bold uppercase block mb-0.5">AI Detected Anomaly</span>
+                          <span className="text-[var(--color-foreground)] line-clamp-2 italic">"{dataPoint.alertReason}"</span>
+                        </div>
+                      )}
+
+                      <div className="space-y-1">
+                        {payload.map((entry: any, index: number) => (
+                          <div key={index} className="flex justify-between items-center gap-4">
+                            <span className="text-[11px]" style={{ color: entry.color }}>{entry.name}</span>
+                            <span className="text-[11px] font-mono font-bold">{entry.value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                }
+                return null;
+              }}
             />
             <Legend wrapperStyle={{ fontSize: '10px', paddingTop: '20px' }} />
+            
+            {/* Anomaly Areas */}
+            {chartData.filter(d => d.isAnomaly).map((anomaly, idx) => (
+              <ReferenceArea 
+                key={`anomaly-${idx}`}
+                x1={anomaly.time || anomaly.timestamp} 
+                x2={anomaly.time || anomaly.timestamp} 
+                stroke="#EF4444" 
+                strokeOpacity={0.8}
+                strokeWidth={2}
+                fill="#EF4444" 
+                fillOpacity={0.05}
+                label={{ value: '⚠', position: 'insideTopLeft', fill: '#EF4444', fontSize: 12, fontWeight: 'bold' }}
+              />
+            ))}
             
             {/* Dynamically render lines for every parameter in the registry */}
             {parameters.map((param, index) => (

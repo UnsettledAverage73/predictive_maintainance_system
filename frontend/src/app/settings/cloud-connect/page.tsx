@@ -124,7 +124,7 @@ export default function CloudConnectWizardPage() {
               <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
                 <h2 className="text-xl font-semibold mb-4">Choose your provider</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
-                  {['AWS', 'GCP', 'Azure', 'Local'].map(p => (
+                  {['AWS', 'Local'].map(p => (
                     <button 
                       key={p}
                       onClick={() => setProvider(p as Provider)}
@@ -222,12 +222,6 @@ export default function CloudConnectWizardPage() {
                   </div>
                 </div>
               </div>
-            )}
-
-            {step === 2 && provider !== 'AWS' && provider !== 'Local' && (
-               <div className="text-center p-16 bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] animate-in slide-in-from-right-4 duration-300">
-                 <p className="text-slate-400 font-medium">Mock stub for {provider} form logic.</p>
-               </div>
             )}
 
             {step === 3 && (

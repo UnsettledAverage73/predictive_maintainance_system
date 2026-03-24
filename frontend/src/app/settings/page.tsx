@@ -14,14 +14,6 @@ export default function SettingsPage() {
       bg: 'bg-teal-500/10' 
     },
     { 
-      title: 'Security Center', 
-      description: 'Manage 2FA, Active Directory SSO, API keys, and access logs.', 
-      icon: Shield, 
-      href: '/settings/security', 
-      color: 'text-blue-400', 
-      bg: 'bg-blue-500/10' 
-    },
-    { 
       title: 'SMS & Alert Preferences', 
       description: 'Configure multi-channel notification rules, rotation schedules, and thresholds.', 
       icon: Bell, 

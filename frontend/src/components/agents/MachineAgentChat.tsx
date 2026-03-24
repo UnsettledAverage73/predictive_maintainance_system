@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { ChatMessage } from "@/types";
 import { Send, Loader2, BrainCircuit } from "lucide-react";
 import { api } from "@/lib/api";
@@ -28,7 +30,7 @@ export function MachineAgentChat({ machineId, machineName, className }: MachineA
         const response = await api.chat({
           messages: [{
             role: "user",
-            content: "Provide a complete machine health summary with sections for asset context, telemetry analysis, active threats, likely root cause, urgency, and recommended next action."
+            content: "Generate a technical health summary for this asset. Be concise, highlight critical breaches, and provide a numbered technical prescription."
           }],
           machineId: machineId,
           machineName: machineName,
@@ -138,12 +140,31 @@ export function MachineAgentChat({ machineId, machineName, className }: MachineA
             {messages.map(m => (
               <div key={m.id} className={cn("flex flex-col gap-1", m.role === "assistant" ? "items-start" : "items-end")}>
                 <div className={cn(
-                  "max-w-[90%] p-3 rounded-xl text-xs leading-relaxed whitespace-pre-wrap",
+                  "max-w-[95%] p-3 rounded-xl text-[11px] leading-relaxed",
                   m.role === "assistant" 
-                    ? "bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-foreground)] rounded-tl-none" 
-                    : "bg-[var(--color-primary)] text-black font-semibold rounded-tr-none"
+                    ? "bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-foreground)] rounded-tl-none prose prose-invert prose-xs max-w-none" 
+                    : "bg-[var(--color-primary)] text-black font-semibold rounded-tr-none whitespace-pre-wrap"
                 )}>
-                  {m.content}
+                  {m.role === "assistant" ? (
+                    <ReactMarkdown 
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        p: ({children}) => <p className="mb-2 last:mb-0">{children}</p>,
+                        ul: ({children}) => <ul className="list-disc pl-4 mb-2 space-y-0.5">{children}</ul>,
+                        ol: ({children}) => <ol className="list-decimal pl-4 mb-2 space-y-0.5">{children}</ol>,
+                        li: ({children}) => <li className="mb-0">{children}</li>,
+                        h1: ({children}) => <h1 className="text-xs font-bold uppercase mb-2 text-[var(--color-primary)]">{children}</h1>,
+                        h2: ({children}) => <h2 className="text-[10px] font-bold uppercase mb-1.5 text-[var(--color-muted)] tracking-wider">{children}</h2>,
+                        h3: ({children}) => <h3 className="text-[10px] font-bold uppercase mb-1 text-[var(--color-muted)]">{children}</h3>,
+                        strong: ({children}) => <strong className="font-bold text-[var(--color-primary)]">{children}</strong>,
+                        code: ({children}) => <code className="bg-black/30 px-1 rounded font-mono text-[9px]">{children}</code>
+                      }}
+                    >
+                      {m.content}
+                    </ReactMarkdown>
+                  ) : (
+                    m.content
+                  )}
                 </div>
                 <span className="text-[8px] text-[var(--color-muted)] font-mono px-1">
                   {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}

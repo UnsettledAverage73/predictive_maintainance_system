@@ -40,6 +40,17 @@ export interface MaintenanceTask {
   dueDate?: string;
   assignedTo?: string;
   createdAt?: string;
+  priorityScore?: number;
+  recommendedAction?: string;
+  scoreBreakdown?: {
+    criticality: number;
+    severity: number;
+    resourceReadiness: number;
+    opportunityScore: number;
+    safetyOverride: number;
+    complianceBoost: number;
+  };
+  blockingFactors?: string[];
 }
 
 export interface TelemetryPoint {

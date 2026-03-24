@@ -95,6 +95,7 @@ export const api = {
   mitigateRisk: (id: string) => fetchApi(`/api/equipment/${id}/mitigate`, { method: "POST" }),
   getWhatsAppNumber: () => fetchApi("/api/settings/whatsapp"),
   updateWhatsAppNumber: (number: string) => fetchApi("/api/settings/whatsapp", { method: "POST", body: JSON.stringify({ number }) }),
+  submitAlertFeedback: (id: string | number, payload: any) => fetchApi(`/api/alerts/${id}/feedback`, { method: "POST", body: JSON.stringify(payload) }),
   getMachineParameters: (id: string) => fetchApi(`/api/machines/${id}/parameters`),
   addMachineParameter: (id: string, payload: any) => fetchApi(`/api/machines/${id}/parameters`, { method: "POST", body: JSON.stringify(payload) }),
   getTemplates: () => fetchApi("/api/machines/templates"),

@@ -69,9 +69,19 @@ def init_db():
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
             severity TEXT,
             reason TEXT,
-            prescription TEXT
+            prescription TEXT,
+            feedback_score INTEGER, -- 1 for correct, -1 for incorrect
+            feedback_notes TEXT
         )
     ''')
+
+    # Add columns if they don't exist (Migration)
+    try:
+        cursor.execute("ALTER TABLE ai_alerts ADD COLUMN feedback_score INTEGER")
+    except sqlite3.OperationalError: pass
+    try:
+        cursor.execute("ALTER TABLE ai_alerts ADD COLUMN feedback_notes TEXT")
+    except sqlite3.OperationalError: pass
 
     # 3. Feedback Layer: Manual repair logs from the Sovereign Engineer
     # This is the "Ground Truth" that makes your RAG system smarter over time.
@@ -94,6 +104,7 @@ def init_db():
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
             production_line TEXT,
+            machine_class TEXT, -- New: Machine Type (CNC, Robotic Arm, etc)
             plant_id TEXT DEFAULT 'Hosur-01', -- New: Plant Identification
             sector TEXT DEFAULT 'Electronics', -- New: Sector (Steel, Auto, Semi)
             protocol TEXT,
@@ -105,6 +116,10 @@ def init_db():
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+
+    try:
+        cursor.execute("ALTER TABLE equipment ADD COLUMN machine_class TEXT")
+    except sqlite3.OperationalError: pass
 
     # 5. Maintenance Schedule: Task management
     cursor.execute('''
@@ -208,6 +223,84 @@ def init_db():
             FOREIGN KEY(machine_id) REFERENCES equipment(id)
         )
     ''')
+
+    # 12. Scheduling profile: operational criticality and downtime impact
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS asset_priority_profile (
+            machine_id TEXT PRIMARY KEY,
+            machine_class TEXT DEFAULT 'tier2',
+            criticality_score REAL DEFAULT 3,
+            downtime_cost_per_hour_inr REAL DEFAULT 50000,
+            downstream_dependency_count INTEGER DEFAULT 0,
+            bypass_available BOOLEAN DEFAULT 0,
+            current_demand_level TEXT DEFAULT 'normal',
+            FOREIGN KEY(machine_id) REFERENCES equipment(id)
+        )
+    ''')
+
+    # 13. Scheduling resources: spare inventory
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS inventory_spares (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            machine_id TEXT NOT NULL,
+            part_code TEXT,
+            part_name TEXT NOT NULL,
+            qty_available INTEGER DEFAULT 0,
+            lead_time_hours REAL DEFAULT 24,
+            warehouse_location TEXT,
+            FOREIGN KEY(machine_id) REFERENCES equipment(id)
+        )
+    ''')
+
+    # 14. Scheduling resources: technician skills and current shift
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS technician_skills (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            technician_id TEXT NOT NULL,
+            technician_name TEXT NOT NULL,
+            skill_code TEXT NOT NULL,
+            certification_level TEXT DEFAULT 'general',
+            is_on_shift BOOLEAN DEFAULT 0
+        )
+    ''')
+
+    # 15. Scheduling resources: specialized tools
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS tool_availability (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tool_id TEXT NOT NULL,
+            tool_name TEXT NOT NULL,
+            machine_id TEXT,
+            is_available BOOLEAN DEFAULT 1,
+            reserved_until DATETIME
+        )
+    ''')
+
+    # 16. Scheduling opportunity windows from production plan
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS production_windows (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            machine_id TEXT NOT NULL,
+            window_start DATETIME NOT NULL,
+            window_end DATETIME NOT NULL,
+            window_type TEXT DEFAULT 'low_demand',
+            opportunity_score REAL DEFAULT 0.5,
+            FOREIGN KEY(machine_id) REFERENCES equipment(id)
+        )
+    ''')
+
+    # 17. Scheduling safety and compliance pressure
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS safety_risk_profile (
+            machine_id TEXT PRIMARY KEY,
+            safety_risk_score REAL DEFAULT 0,
+            environmental_risk_score REAL DEFAULT 0,
+            near_miss_count_90d INTEGER DEFAULT 0,
+            compliance_due_date TEXT,
+            regulatory_blocker BOOLEAN DEFAULT 0,
+            FOREIGN KEY(machine_id) REFERENCES equipment(id)
+        )
+    ''')
     
     conn.commit()
     conn.close()
@@ -215,6 +308,7 @@ def init_db():
     # 5. Seed initial data if empty
     seed_initial_data()
     seed_insight_data()
+    seed_priority_scheduling_data()
     
     print(f"--- [DATABASE UPDATED] Schema V3 Live at {DB_PATH} ---")
 
@@ -561,6 +655,112 @@ def seed_insight_data():
     conn.commit()
     conn.close()
 
+
+def seed_priority_scheduling_data():
+    """Seed priority scheduling inputs for the AI schedule tab."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name FROM equipment")
+    machines = cursor.fetchall()
+
+    priority_defaults = {
+        "CNC001": ("tier1", 5, 100000, 3, 0, "peak"),
+        "CONV01": ("tier2", 3, 45000, 2, 1, "normal"),
+        "HYD005": ("tier1", 4, 70000, 1, 0, "normal"),
+        "EXT002": ("tier3", 1, 15000, 0, 1, "low"),
+    }
+
+    safety_defaults = {
+        "CNC001": (18, 12, 2, (datetime.now() + timedelta(days=10)).date().isoformat(), 0),
+        "CONV01": (6, 2, 0, (datetime.now() + timedelta(days=20)).date().isoformat(), 0),
+        "HYD005": (15, 14, 1, (datetime.now() + timedelta(days=5)).date().isoformat(), 0),
+        "EXT002": (2, 1, 0, (datetime.now() + timedelta(days=45)).date().isoformat(), 0),
+    }
+
+    inventory_defaults = {
+        "CNC001": [("CNC-PMP-17", "Spindle Coolant Pump", 2, 6, "Warehouse A"), ("BRG-UNIT-B", "Bearing Unit-B", 1, 8, "Warehouse A")],
+        "CONV01": [("CNV-BELT-02", "Conveyor Belt Section", 3, 10, "Warehouse B")],
+        "HYD005": [("HYD-SEAL-11", "Seal Kit", 1, 6, "Warehouse C")],
+        "EXT002": [("EXT-SNS-05", "Thermal Sensor Node", 4, 4, "Warehouse D")],
+    }
+
+    technicians = [
+        ("TECH-001", "Sarah", "spindle", "specialist", 1),
+        ("TECH-002", "Ravi", "hydraulics", "specialist", 1),
+        ("TECH-003", "Meena", "conveyor", "advanced", 1),
+        ("TECH-004", "Anita", "general", "advanced", 0),
+    ]
+
+    tools = [
+        ("TOOL-ALIGN", "Laser Aligner", "CNC001", 1, None),
+        ("TOOL-THERM", "Thermal Camera", "HYD005", 1, None),
+        ("TOOL-BELT", "Belt Tension Gauge", "CONV01", 1, None),
+        ("TOOL-GENERAL", "General Service Kit", None, 1, None),
+    ]
+
+    for machine_id, machine_name in machines:
+        machine_class, criticality, downtime_cost, downstream_count, bypass_available, demand_level = priority_defaults.get(
+            machine_id, ("tier2", 3, 30000, 0, 1, "normal")
+        )
+        cursor.execute("""
+            INSERT OR IGNORE INTO asset_priority_profile
+            (machine_id, machine_class, criticality_score, downtime_cost_per_hour_inr, downstream_dependency_count, bypass_available, current_demand_level)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (machine_id, machine_class, criticality, downtime_cost, downstream_count, bypass_available, demand_level))
+
+        safety_score, env_score, near_miss, due_date, blocker = safety_defaults.get(
+            machine_id, (4, 1, 0, (datetime.now() + timedelta(days=30)).date().isoformat(), 0)
+        )
+        cursor.execute("""
+            INSERT OR IGNORE INTO safety_risk_profile
+            (machine_id, safety_risk_score, environmental_risk_score, near_miss_count_90d, compliance_due_date, regulatory_blocker)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (machine_id, safety_score, env_score, near_miss, due_date, blocker))
+
+        cursor.execute("SELECT COUNT(*) FROM inventory_spares WHERE machine_id = ?", (machine_id,))
+        if cursor.fetchone()[0] == 0:
+            for part_code, part_name, qty_available, lead_time_hours, warehouse_location in inventory_defaults.get(machine_id, [(f"{machine_id}-KIT", f"{machine_name} Service Kit", 1, 12, "Warehouse Z")]):
+                cursor.execute("""
+                    INSERT INTO inventory_spares
+                    (machine_id, part_code, part_name, qty_available, lead_time_hours, warehouse_location)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (machine_id, part_code, part_name, qty_available, lead_time_hours, warehouse_location))
+
+        cursor.execute("SELECT COUNT(*) FROM production_windows WHERE machine_id = ?", (machine_id,))
+        if cursor.fetchone()[0] == 0:
+            now = datetime.now()
+            windows = [
+                (now + timedelta(hours=1), now + timedelta(hours=3), "changeover", 0.95 if machine_id == "CNC001" else 0.7),
+                (now + timedelta(hours=8), now + timedelta(hours=12), "low_demand", 0.65 if machine_id != "CNC001" else 0.5),
+            ]
+            for window_start, window_end, window_type, opportunity_score in windows:
+                cursor.execute("""
+                    INSERT INTO production_windows
+                    (machine_id, window_start, window_end, window_type, opportunity_score)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (machine_id, window_start.isoformat(), window_end.isoformat(), window_type, opportunity_score))
+
+    cursor.execute("SELECT COUNT(*) FROM technician_skills")
+    if cursor.fetchone()[0] == 0:
+        for technician in technicians:
+            cursor.execute("""
+                INSERT INTO technician_skills
+                (technician_id, technician_name, skill_code, certification_level, is_on_shift)
+                VALUES (?, ?, ?, ?, ?)
+            """, technician)
+
+    cursor.execute("SELECT COUNT(*) FROM tool_availability")
+    if cursor.fetchone()[0] == 0:
+        for tool in tools:
+            cursor.execute("""
+                INSERT INTO tool_availability
+                (tool_id, tool_name, machine_id, is_available, reserved_until)
+                VALUES (?, ?, ?, ?, ?)
+            """, tool)
+
+    conn.commit()
+    conn.close()
+
 def add_equipment(eq_id, name, line, protocol, plant_id='Hosur-01', sector='Electronics', agent_id=None):
     """
     Onboards a new physical asset into the Sovereign Matrix across global facilities.
@@ -708,6 +908,76 @@ def get_incident_report_ai(machine_id):
     return dict(row) if row else None
 
 
+def get_asset_priority_profile(machine_id):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM asset_priority_profile WHERE machine_id = ?", (machine_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_inventory_spares(machine_id):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM inventory_spares WHERE machine_id = ? ORDER BY qty_available DESC, lead_time_hours ASC", (machine_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_available_technicians():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM technician_skills WHERE is_on_shift = 1")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_available_tools(machine_id=None):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    if machine_id:
+        cursor.execute("""
+            SELECT * FROM tool_availability
+            WHERE is_available = 1 AND (machine_id = ? OR machine_id IS NULL)
+        """, (machine_id,))
+    else:
+        cursor.execute("SELECT * FROM tool_availability WHERE is_available = 1")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_production_windows(machine_id):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT * FROM production_windows
+        WHERE machine_id = ?
+        ORDER BY window_start ASC
+    """, (machine_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_safety_risk_profile(machine_id):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM safety_risk_profile WHERE machine_id = ?", (machine_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
 def upsert_incident_report_ai(machine_id, report):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -804,8 +1074,22 @@ def log_ai_alert(eq_id, severity, reason, prescription):
         "INSERT INTO ai_alerts (equipment_id, timestamp, severity, reason, prescription) VALUES (?, ?, ?, ?, ?)",
         (eq_id, datetime.now().isoformat(), severity, reason, prescription)
     )
+    new_id = cursor.lastrowid
     conn.commit()
     conn.close()
+    return new_id
+
+def log_alert_feedback(alert_id, score, notes=None):
+    """Logs technician feedback on a specific AI alert to improve ground truth."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE ai_alerts SET feedback_score = ?, feedback_notes = ? WHERE id = ?",
+        (score, notes, alert_id)
+    )
+    conn.commit()
+    conn.close()
+    return True
 
 def get_last_alert_timestamp(equipment_id):
     """
@@ -815,13 +1099,13 @@ def get_last_alert_timestamp(equipment_id):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT timestamp FROM ai_alerts 
-        WHERE equipment_id = ? 
+        SELECT timestamp FROM ai_alerts
+        WHERE equipment_id = ?
         ORDER BY timestamp DESC LIMIT 1
     """, (equipment_id,))
     row = cursor.fetchone()
     conn.close()
-    
+
     if row:
         try:
             # Convert ISO 8601 string back to timestamp
@@ -831,6 +1115,14 @@ def get_last_alert_timestamp(equipment_id):
             return 0
     return 0
 
+def get_machine_class(machine_id):
+    """Retrieves the machine class/type for an asset."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT machine_class FROM equipment WHERE id = ?", (machine_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else "Generic Industrial"
 def get_recent_readings(limit=100):
     """Retrieves chronological telemetry for frontend charting."""
     conn = sqlite3.connect(DB_PATH)

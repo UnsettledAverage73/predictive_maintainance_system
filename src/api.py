@@ -14,8 +14,9 @@ from src.agent.maintenance_agent import MaintenanceAgent
 from src.data.analytics import calculate_failure_probability
 from src.agent.reporter import SovereignReporter
 from src.agent.cloud_provisioner import router as cloud_router
-from src.data.database import init_db
+from src.data.database import init_db, log_alert_feedback
 from src.services.machine_insights import get_machine_insights
+from src.services.priority_scheduler import generate_prioritized_schedule
 from src.notifications.whatsapp import get_config, save_config
 
 # Path Configurations
@@ -28,6 +29,7 @@ REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 REDIS_CHANNEL = "telemetry_stream"
 SCHEDULE_CHANNEL = "schedule_updates"
+ALERT_CHANNEL = os.getenv("ALERT_CHANNEL", "ai_alerts_channel")
 
 # Redis Client
 r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
@@ -81,6 +83,10 @@ class TaskUpdate(BaseModel):
     notes: Optional[str] = None
     operator: Optional[str] = None
 
+class FeedbackRequest(BaseModel):
+    score: int
+    notes: Optional[str] = None
+
 
 def resolve_virtual_task(task_id: str) -> Optional[Dict[str, Any]]:
     """Resolve a virtual AI task from cached or freshly generated schedules."""
@@ -89,7 +95,8 @@ def resolve_virtual_task(task_id: str) -> Optional[Dict[str, Any]]:
     if virtual_task:
         return virtual_task
 
-    current_ai_tasks = agent.generate_prioritized_schedule()
+    current_ai_tasks = generate_prioritized_schedule()
+    agent._last_schedule = current_ai_tasks
     virtual_task = next((t for t in current_ai_tasks if str(t.get("id")) == task_id), None)
     if virtual_task:
         return virtual_task
@@ -149,6 +156,32 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
 @app.post("/api/chat")
 async def chat_with_agent(req: ChatRequest):
     """Orchestrates machine-specific reasoning with AI caching and advanced orchestration."""
+    # 0. Zero-Latency Initial Analysis Check
+    # If this is the auto-triggered summary request, check for pre-computed content
+    INITIAL_SUMMARY_TRIGGER = "Generate a technical health summary for this asset. Be concise, highlight critical breaches, and provide a numbered technical prescription."
+    user_msg = req.messages[-1]["content"] if req.messages else ""
+    
+    if user_msg == INITIAL_SUMMARY_TRIGGER and req.machineId != "GLOBAL":
+        try:
+            pre_computed_key = f"ai_latest_summary:{req.machineId}"
+            pre_computed_data = await r.get(pre_computed_key)
+            if pre_computed_data:
+                summary = json.loads(pre_computed_data)
+                # Ensure it's not too stale (e.g., last 1 hour)
+                ts = datetime.fromisoformat(summary["timestamp"])
+                if datetime.now() - ts < timedelta(hours=1):
+                    return {
+                        "message": summary["message"],
+                        "sources": summary.get("sources", []),
+                        "confidence": summary.get("confidence", 98.5),
+                        "machineId": req.machineId,
+                        "sessionId": req.sessionId,
+                        "cached": True,
+                        "pre_computed": True
+                    }
+        except Exception as e:
+            print(f"Pre-computed cache retrieval error: {e}")
+
     # 1. Check AI Cache (Phase 4)
     # Using a deterministic hash of the message content
     last_msg = req.messages[-1]["content"] if req.messages else ""
@@ -211,7 +244,9 @@ async def onboard_machine(req: OnboardRequest):
 async def get_schedule(ai_prioritized: bool = False):
     """Returns the master maintenance schedule, optionally prioritized by AI."""
     if ai_prioritized:
-        return agent.generate_prioritized_schedule()
+        prioritized = generate_prioritized_schedule()
+        agent._last_schedule = prioritized
+        return prioritized
         
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -333,6 +368,33 @@ async def schedule_websocket(websocket: WebSocket):
         except:
             pass
         await asyncio.sleep(60) 
+    finally:
+        try:
+            await r_async.aclose()
+        except:
+            pass
+
+@app.websocket("/ws/alerts")
+async def alerts_websocket(websocket: WebSocket):
+    await websocket.accept()
+    r_async = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+    pubsub = r_async.pubsub()
+    try:
+        await pubsub.subscribe(ALERT_CHANNEL)
+        async for message in pubsub.listen():
+            if message["type"] == "message":
+                await websocket.send_text(message["data"])
+    except WebSocketDisconnect:
+        try:
+            await pubsub.unsubscribe(ALERT_CHANNEL)
+        except:
+            pass
+    except Exception as e:
+        print(f"Alert WS Error: {e}")
+        try:
+            await websocket.send_text(json.dumps({"error": "Alert stream unavailable (Redis Offline)"}))
+        except:
+            pass
     finally:
         try:
             await r_async.aclose()
@@ -502,6 +564,15 @@ async def get_machine_telemetry(equipment_id: str, minutes: int = 60):
             ORDER BY timestamp ASC
         """, (equipment_id, minutes))
         dynamic_rows = cursor.fetchall()
+
+        # 2.1 Fetch Alerts for the same window to tag anomalies
+        cursor.execute("""
+            SELECT id, timestamp as time, severity, reason 
+            FROM ai_alerts 
+            WHERE equipment_id = ? 
+              AND timestamp > datetime('now', '-' || ? || ' minutes')
+        """, (equipment_id, minutes))
+        alert_rows = [dict(row) for row in cursor.fetchall()]
         
         # 3. Pivot dynamic rows by timestamp
         pivoted_data = {}
@@ -510,7 +581,18 @@ async def get_machine_telemetry(equipment_id: str, minutes: int = 60):
             if t not in pivoted_data: pivoted_data[t] = {"time": t}
             pivoted_data[t][row['parameter_key']] = row['value']
             
-        # 4. Merge
+        # 4. Merge alerts into the closest telemetry point
+        # This allows the frontend to highlight specific anomalies on the chart
+        for alert in alert_rows:
+            # Find closest timestamp in merged_data (rough approximation for simulation)
+            a_ts = alert['time']
+            if a_ts in pivoted_data:
+                pivoted_data[a_ts]["isAnomaly"] = True
+                pivoted_data[a_ts]["alertSeverity"] = alert['severity']
+                pivoted_data[a_ts]["alertReason"] = alert['reason']
+                pivoted_data[a_ts]["alertId"] = alert['id']
+
+        # 5. Merge legacy and dynamic
         merged_data = {row['time']: row for row in legacy_rows}
         for t, data in pivoted_data.items():
             if t in merged_data:
@@ -682,6 +764,14 @@ async def get_alerts():
     cursor.execute("SELECT * FROM ai_alerts ORDER BY timestamp DESC LIMIT 15")
     rows = [dict(row) for row in cursor.fetchall()]; conn.close()
     return rows
+
+@app.post("/api/alerts/{alert_id}/feedback")
+async def submit_alert_feedback(alert_id: int, req: FeedbackRequest):
+    """Submits technician feedback for an AI alert to improve ground truth."""
+    success = log_alert_feedback(alert_id, req.score, req.notes)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to log feedback")
+    return {"status": "success", "message": "Feedback registered"}
 
 @app.get("/api/settings/whatsapp")
 async def get_whatsapp_settings():

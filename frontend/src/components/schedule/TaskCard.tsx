@@ -15,6 +15,8 @@ export function TaskCard({ task, className, onUpdate }: TaskCardProps) {
   const dueDate = task.due_date || task.dueDate;
   const machineName = task.machine_name || task.machineName || task.machine_id || task.machineId;
   const taskName = task.task_name || task.title || 'Untitled Task';
+  const priorityScore = task.priorityScore ?? null;
+  const recommendedAction = task.recommendedAction ?? null;
 
   const getStatusColor = (status: MaintenanceTask['status']) => {
     switch (status) {
@@ -121,6 +123,29 @@ export function TaskCard({ task, className, onUpdate }: TaskCardProps) {
               {task.aiReason}
             </p>
           </div>
+        </div>
+      )}
+
+      {(priorityScore !== null || recommendedAction || (task.blockingFactors && task.blockingFactors.length > 0)) && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[10px] font-mono uppercase tracking-wider">
+          {priorityScore !== null && (
+            <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-2">
+              <span className="text-[var(--color-muted)]">Priority Score</span>
+              <div className="mt-1 text-sm font-black text-white">{priorityScore}</div>
+            </div>
+          )}
+          {recommendedAction && (
+            <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 sm:col-span-2">
+              <span className="text-[var(--color-muted)]">Recommended Action</span>
+              <div className="mt-1 text-sm font-black text-white">{recommendedAction}</div>
+            </div>
+          )}
+          {task.blockingFactors && task.blockingFactors.length > 0 && (
+            <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 sm:col-span-3">
+              <span className="text-amber-300">Blockers</span>
+              <div className="mt-1 text-[11px] font-bold text-slate-200 normal-case tracking-normal">{task.blockingFactors.join(", ")}</div>
+            </div>
+          )}
         </div>
       )}
 

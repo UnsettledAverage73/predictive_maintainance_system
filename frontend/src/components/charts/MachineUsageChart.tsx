@@ -8,15 +8,19 @@ import { Activity } from "lucide-react";
 export function MachineUsageChart() {
   const [data, setData] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchUsage = async () => {
       try {
         const usageData = await api.getFactoryUsage();
-        setData(usageData);
+        setData(usageData || []);
+        setError(null);
+      } catch (err) {
+        console.error("Failed to fetch usage data:", err);
+        setError("Capacity data currently unavailable");
+      } finally {
         setIsLoading(false);
-      } catch (error) {
-        console.error("Failed to fetch usage data:", error);
       }
     };
 
@@ -29,6 +33,17 @@ export function MachineUsageChart() {
     return (
       <div className="h-[300px] w-full bg-[#1C2128]/50 animate-pulse rounded-xl border border-[var(--color-border)] flex items-center justify-center">
         <span className="text-slate-500 font-mono text-xs">Aggregating factory usage...</span>
+      </div>
+    );
+  }
+
+  if (error && data.length === 0) {
+    return (
+      <div className="h-[300px] w-full bg-red-500/5 rounded-xl border border-red-500/10 flex flex-col items-center justify-center gap-3">
+        <div className="p-3 rounded-full bg-red-500/10 border border-red-500/20">
+          <Activity className="w-5 h-5 text-red-500/50" />
+        </div>
+        <p className="text-[11px] font-bold uppercase tracking-widest text-red-500/60">{error}</p>
       </div>
     );
   }

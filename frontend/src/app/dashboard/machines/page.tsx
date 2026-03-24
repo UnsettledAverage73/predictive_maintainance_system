@@ -4,9 +4,10 @@ import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { MachineCard } from "@/components/machines/MachineCard";
 import { MachineCardSkeleton } from "@/components/machines/MachineCardSkeleton";
 import { Machine } from "@/types";
-import { Filter, Search, Settings2 } from "lucide-react";
+import { Filter, Search, Settings2, FileText } from "lucide-react";
 import { api } from "@/lib/api";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 
 type StatusFilter = "all" | Machine["status"];
 type ProtocolFilter = "all" | Machine["protocol"];
@@ -96,7 +97,14 @@ export default function MachinesPage() {
             Browse and manage all physical assets
           </p>
         </div>
-        <div className="flex gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-muted)]">
+        <div className="flex items-center gap-3 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-muted)]">
+          <Link 
+            href="/dashboard/reports/facility"
+            className="flex items-center gap-2 rounded-full border border-[var(--color-primary)]/20 bg-[var(--color-primary)]/5 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-primary)] hover:bg-[var(--color-primary)]/10 transition-colors"
+          >
+            <FileText className="w-3.5 h-3.5" />
+            Facility Report
+          </Link>
           <div className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)]/60 px-3 py-2">
             {filteredMachines.length} visible
           </div>

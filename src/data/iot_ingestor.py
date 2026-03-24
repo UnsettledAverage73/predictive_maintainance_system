@@ -3,7 +3,9 @@ import os
 import sys
 import time
 import redis
+import asyncio
 from typing import List, Tuple
+from datetime import datetime
 
 # Add src to python path for internal module discovery
 sys.path.append(os.path.join(os.path.dirname(__file__), '../../'))
@@ -31,11 +33,56 @@ REDIS_CHANNEL = "telemetry_stream"
 
 r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
 
+# --- PREDICTIVE TREND CONFIGURATION ---
+ROC_THRESHOLDS = {
+    "temperature": 0.5,      # °C per second
+    "vibration": 0.1,        # G per second
+    "vibration_rms": 0.1,    # mm/s per second
+    "pressure": 0.2,         # bar per second
+    "current_draw": 2.0      # A per second
+}
+
+class TrendAnalyzer:
+    """Detects rapid parameter shifts (Rate of Change) before they hit critical thresholds."""
+    def __init__(self, history_size=5):
+        self.history = {} # (machine_id, param) -> [(timestamp, value)]
+        self.history_size = history_size
+
+    def analyze(self, machine_id: str, param: str, value: float, ts: float) -> Tuple[bool, str]:
+        key = (machine_id, param)
+        if key not in self.history:
+            self.history[key] = []
+        
+        # Add new point
+        self.history[key].append((ts, value))
+        if len(self.history[key]) > self.history_size:
+            self.history[key].pop(0)
+
+        if len(self.history[key]) < 2:
+            return False, ""
+
+        # Calculate ROC over the window
+        first_ts, first_val = self.history[key][0]
+        time_delta = ts - first_ts
+        if time_delta <= 0:
+            return False, ""
+
+        roc = abs(value - first_val) / time_delta
+        threshold = ROC_THRESHOLDS.get(param, 1.0) # Default 1.0 units/sec
+
+        if roc > threshold:
+            direction = "Rising" if value > first_val else "Falling"
+            reason = f"Rapid {param} shift: {direction} at {roc:.2f} units/sec (Threshold: {threshold})"
+            return True, reason
+        
+        return False, ""
+
 # Initialize Database Schema
 init_db()
 
 # Load Sovereign AI Agent
 agent = MaintenanceAgent("data/sample_maintenance_data.json")
+trend_engine = TrendAnalyzer()
 
 FIELD_ALIASES = {
     "temperature": ["temperature"],
@@ -119,7 +166,7 @@ def _build_alert_reason(critical_breaches: List[Tuple[str, float, dict]]) -> str
         )
     return "Critical parameter threshold breach: " + "; ".join(formatted)
 
-def run_ingestor():
+async def run_ingestor():
     print(f"--- [SOVEREIGN] IoT Ingestor Online ---")
     print(f"Monitoring: {IPC_FILE} | Channel: {REDIS_CHANNEL} | Commands: {COMMAND_FILE}")
     
@@ -143,7 +190,7 @@ def run_ingestor():
 
             # --- PHASE 2: TELEMETRY INGESTION (SENSING) ---
             if not os.path.exists(IPC_FILE):
-                time.sleep(POLL_INTERVAL)
+                await asyncio.sleep(POLL_INTERVAL)
                 continue
 
             try:
@@ -151,7 +198,7 @@ def run_ingestor():
                     readings = json.load(f)
 
                 if not readings:
-                    time.sleep(POLL_INTERVAL)
+                    await asyncio.sleep(POLL_INTERVAL)
                     continue
 
                 # Sort by timestamp to ensure chronological processing
@@ -175,28 +222,63 @@ def run_ingestor():
                     # 2. Log Raw Telemetry
                     log_sensor_reading(eq_id, temp, vib)
                     _log_payload_telemetry(eq_id, payload)
+
+                    # 3. Predictive Trend Analysis (ROC)
+                    trend_reason = ""
+                    is_trend_anomaly = False
+                    for key, val in payload.items():
+                        if key in {"equipment_id", "timestamp"}: continue
+                        num_val = _coerce_float(val)
+                        if num_val is not None:
+                            triggered, msg = trend_engine.analyze(eq_id, key, num_val, ts)
+                            if triggered:
+                                is_trend_anomaly = True
+                                trend_reason = msg
+                                break # One trend is enough to trigger
                     
-                    # 3. Parameter-driven Anomaly Detection
+                    # 4. Parameter-driven Anomaly Detection (Thresholds)
                     critical_breaches = _evaluate_parameter_alerts(eq_id, payload)
-                    is_anomaly = bool(critical_breaches)
+                    is_threshold_anomaly = bool(critical_breaches)
+                    
+                    is_anomaly = is_threshold_anomaly or is_trend_anomaly
                     
                     if is_anomaly:
                         now = time.time()
                         last_alert_ts = get_last_alert_timestamp(eq_id)
                         
                         if (now - last_alert_ts) > ALERT_COOLDOWN:
-                            reason = _build_alert_reason(critical_breaches)
-                            print(f"\n[!!!] CRITICAL ANOMALY: {eq_id} | {reason} [!!!]")
+                            reason = _build_alert_reason(critical_breaches) if is_threshold_anomaly else trend_reason
+                            severity = "CRITICAL" if is_threshold_anomaly else "WARNING"
+                            print(f"\n[!!!] {severity} ANOMALY: {eq_id} | {reason} [!!!]")
                             
                             try:
-                                # Trigger LLM Reasoning
-                                analysis = agent.analyze_patterns()
-                                create_ai_alert(eq_id, "CRITICAL", reason, analysis)
-                                print(f"✅ AI STRATEGIC PRESCRIPTION LOGGED")
+                                # Trigger Comprehensive AI Orchestrator Response
+                                trigger_query = f"URGENT {severity} ALERT: {reason}. Provide technical analysis and prioritized prescription."
+                                orchestrator_result = await agent.get_orchestrator_response(
+                                    query=trigger_query, 
+                                    machine_id=eq_id,
+                                    session_id="SYSTEM-INGESTOR"
+                                )
+                                
+                                analysis = orchestrator_result["message"]
+                                create_ai_alert(eq_id, severity, reason, analysis)
+                                
+                                # 4. ZERO-LATENCY CACHING: Store the latest summary in Redis for the dashboard
+                                cache_key = f"ai_latest_summary:{eq_id}"
+                                summary_data = {
+                                    "message": analysis,
+                                    "timestamp": datetime.now().isoformat(),
+                                    "reason": reason,
+                                    "sources": orchestrator_result.get("sources", []),
+                                    "confidence": orchestrator_result.get("confidence", 95)
+                                }
+                                r.setex(cache_key, 86400, json.dumps(summary_data)) # Cache for 24h
+                                
+                                print(f"✅ AI STRATEGIC PRESCRIPTION LOGGED & CACHED")
                             except Exception as e:
                                 error_msg = f"AI Layer Offline. Protocol: Manual Inspection. Error: {str(e)[:40]}"
                                 create_ai_alert(eq_id, "CRITICAL", reason, error_msg)
-                                print(f"⚠️ AI FALLBACK ACTIVE")
+                                print(f"⚠️ AI FALLBACK ACTIVE: {error_msg}")
                         else:
                             # Log heartbeat without calling AI
                             pass 
@@ -206,10 +288,10 @@ def run_ingestor():
             except (json.JSONDecodeError, IOError):
                 pass
             
-            time.sleep(POLL_INTERVAL)
+            await asyncio.sleep(POLL_INTERVAL)
 
     except KeyboardInterrupt:
         print("\n[!] Sovereign Ingestor: Graceful Shutdown Initiated.")
 
 if __name__ == "__main__":
-    run_ingestor()
+    asyncio.run(run_ingestor())

@@ -5,6 +5,8 @@ import { SecurityBadge } from '@/components/security/SecurityBadge';
 import { APIKeyReveal } from '@/components/security/APIKeyReveal';
 import { SessionCard, Session } from '@/components/security/SessionCard';
 import { ConfirmPhraseModal } from '@/components/ui/confirm-phrase-modal';
+import { Download, Loader2 } from 'lucide-react';
+import { generatePDF } from '@/lib/reports';
 
 const MOCK_SESSIONS: Session[] = [
   { id: '1', device: 'Chrome on Windows', ip: '192.168.1.45', location: 'Manchester, UK', lastActive: '2 minutes ago', started: 'Today 09:14', isCurrent: true },
@@ -30,12 +32,20 @@ export default function SecurityCentrePage() {
   const [newKey, setNewKey] = useState<string | null>(null);
   const [confirmModal, setConfirmModal] = useState<{ isOpen: boolean; phrase: string; action: string; onConfirm: () => void } | null>(null);
 
+  const [isExporting, setIsExporting] = useState(false);
+
   const tabs = [
     { id: 'auth', label: 'Authentication' },
     { id: 'sessions', label: 'Sessions' },
     { id: 'keys', label: 'API Keys' },
     { id: 'audit', label: 'Audit Log' },
   ];
+
+  const handleExportAudit = async () => {
+    setIsExporting(true);
+    await generatePDF('audit-log-table', `Security_Audit_Log_${new Date().toISOString().split('T')[0]}`);
+    setIsExporting(false);
+  };
 
   const handleRevokeSession = (id: string) => {
     setSessions(sessions.filter(s => s.id !== id));
@@ -220,9 +230,16 @@ export default function SecurityCentrePage() {
           <div className="space-y-4">
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-lg font-semibold">Security Audit Log</h2>
-              <button className="px-3 py-1.5 border border-[var(--color-border)] rounded text-sm hover:bg-[var(--color-surface)] transition-colors">Export CSV</button>
+              <button 
+                onClick={handleExportAudit}
+                disabled={isExporting}
+                className="px-3 py-1.5 border border-[var(--color-border)] rounded text-sm hover:bg-[var(--color-surface)] transition-colors flex items-center gap-2"
+              >
+                {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                Export PDF
+              </button>
             </div>
-            <div className="overflow-hidden border border-[var(--color-border)] rounded-lg">
+            <div id="audit-log-table" className="overflow-hidden border border-[var(--color-border)] rounded-lg bg-[#030712]">
               <table className="w-full text-left text-sm">
                 <thead className="bg-[var(--color-surface)] border-b border-[var(--color-border)] text-[var(--color-muted)]">
                   <tr>

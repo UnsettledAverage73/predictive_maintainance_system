@@ -17,17 +17,19 @@ import {
   Search,
   Settings,
   ShieldAlert,
+  ThumbsDown,
+  ThumbsUp,
   X,
 } from 'lucide-react';
 import { useDrag } from '@use-gesture/react';
 import { Alert } from '@/types';
 import { cn } from '@/lib/utils';
-import { api } from '@/lib/api';
+import { api, buildWebSocketUrl } from '@/lib/api';
 
 type SeverityFilter = 'all' | Alert['severity'];
 
 interface BackendAlert {
-  id: number;
+  id?: number | string;
   equipment_id: string;
   severity: string;
   reason: string;
@@ -68,9 +70,11 @@ function getSeverityStyles(severity: Alert['severity']) {
 }
 
 function formatAlert(alert: BackendAlert): Alert {
-  const severity = alert.severity.toLowerCase();
+  const severity = (alert.severity ?? 'info').toLowerCase();
+  const alertId = (alert.id ?? `local-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`).toString();
+  
   return {
-    id: alert.id.toString(),
+    id: alertId,
     machineId: alert.equipment_id,
     machineName: alert.equipment_id,
     severity: severity === 'critical' || severity === 'warning' ? severity : 'info',
@@ -192,7 +196,18 @@ export default function AlertsPage() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [whatsappNumber, setWhatsappNumber] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [feedbackNotes, setFeedbackNotes] = useState('');
+  const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
   const deferredQuery = useDeferredValue(query);
+
+  const insertIncomingAlert = (incoming: BackendAlert) => {
+    const formatted = formatAlert(incoming);
+    setAlerts((prev) => {
+      const next = [formatted, ...prev].slice(0, 30);
+      return next;
+    });
+    setSelectedAlertId((current) => current || formatted.id);
+  };
 
   useEffect(() => {
     const fetchAlerts = async () => {
@@ -225,6 +240,20 @@ export default function AlertsPage() {
     fetchSettings();
     const interval = setInterval(fetchAlerts, 5000);
     return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    const ws = new WebSocket(buildWebSocketUrl('/ws/alerts'));
+    ws.onmessage = (event) => {
+      try {
+        const incoming = JSON.parse(event.data) as BackendAlert;
+        insertIncomingAlert(incoming);
+      } catch (error) {
+        console.error('Alert WS parse error', error);
+      }
+    };
+    ws.onclose = () => console.log('Alerts socket closed');
+    return () => ws.close();
   }, []);
 
   useEffect(() => {
@@ -265,12 +294,27 @@ export default function AlertsPage() {
     setAcknowledgedIds((current) => (current.includes(id) ? current : [...current, id]));
   };
 
+  const handleFeedback = async (alertId: string, score: number) => {
+    setIsSubmittingFeedback(true);
+    try {
+      await api.submitAlertFeedback(alertId, { score, notes: feedbackNotes });
+      setAlerts(prev => prev.map(a => a.id === alertId ? { ...a, feedback_score: score, feedback_notes: feedbackNotes } : a));
+      setFeedbackNotes('');
+      alert("Technician feedback registered. Ground truth data updated.");
+    } catch (error) {
+      console.error("Feedback submission failed:", error);
+      alert("Failed to submit feedback.");
+    } finally {
+      setIsSubmittingFeedback(false);
+    }
+  };
+
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
     window.localStorage.setItem('command-palette-alert-count', String(alerts.length));
     window.dispatchEvent(new Event('command-palette-alerts-updated'));
-  }, [alerts.length]);
+  }, [alerts]);
 
   const visibleAlerts = useMemo(() => {
     const normalizedQuery = deferredQuery.trim().toLowerCase();
@@ -511,6 +555,34 @@ export default function AlertsPage() {
                             ? 'Inspect the asset during the next maintenance window and compare live telemetry with baseline thresholds.'
                             : 'Monitor the machine and validate whether the event should remain informational or be promoted.'}
                       </p>
+                    </aside>
+
+                    <aside className="rounded-2xl border border-[var(--color-primary)]/10 bg-[var(--color-primary)]/5 p-4">
+                      <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--color-primary)]">Technician Ground Truth</p>
+                      <div className="mt-4 space-y-4">
+                        <textarea
+                          value={feedbackNotes}
+                          onChange={(e) => setFeedbackNotes(e.target.value)}
+                          placeholder="Add operator notes on AI accuracy..."
+                          className="w-full bg-[var(--color-background)] border border-[var(--color-border)] rounded-xl p-3 text-xs outline-none focus:border-[var(--color-primary)] transition-colors resize-none h-20"
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleFeedback(selectedAlert.id, 1)}
+                            disabled={isSubmittingFeedback}
+                            className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg border border-[var(--color-primary)]/20 hover:bg-[var(--color-primary)]/10 text-[var(--color-primary)] text-xs font-bold transition-all disabled:opacity-50"
+                          >
+                            <ThumbsUp className="w-3.5 h-3.5" /> Correct Fix
+                          </button>
+                          <button
+                            onClick={() => handleFeedback(selectedAlert.id, -1)}
+                            disabled={isSubmittingFeedback}
+                            className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg border border-red-500/20 hover:bg-red-500/10 text-red-400 text-xs font-bold transition-all disabled:opacity-50"
+                          >
+                            <ThumbsDown className="w-3.5 h-3.5" /> Incorrect
+                          </button>
+                        </div>
+                      </div>
                     </aside>
                   </div>
                 </div>

@@ -5,7 +5,7 @@ import { MachineCard } from "@/components/machines/MachineCard";
 import { MachineUsageChart } from "@/components/charts/MachineUsageChart";
 import { MachineCardSkeleton } from "@/components/machines/MachineCardSkeleton";
 import { Machine, Alert } from "@/types";
-import { Activity, AlertTriangle, ArrowRight, Calendar, Radar, Settings2, ShieldCheck, Sparkles } from "lucide-react";
+import { Activity, AlertTriangle, ArrowRight, Calendar, FileText, Radar, Settings2, ShieldCheck, Sparkles } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
@@ -197,9 +197,15 @@ export default function DashboardPage() {
                 <h2 className="text-sm font-bold uppercase tracking-[0.24em] text-[var(--color-muted)]">Machine Fleet</h2>
                 <p className="mt-1 text-sm text-[var(--color-muted)]">Cards prioritize status, risk score, and maintenance load for faster scanning.</p>
               </div>
-              <Link href="/dashboard/machines" className="hidden md:inline-flex rounded-full border border-white/8 bg-white/4 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-foreground)] hover:border-[var(--color-primary)]/25">
-                Open fleet
-              </Link>
+              <div className="flex gap-2">
+                <Link href="/dashboard/reports/facility" className="hidden md:inline-flex items-center gap-2 rounded-full border border-[var(--color-primary)]/20 bg-[var(--color-primary)]/5 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-primary)] hover:bg-[var(--color-primary)]/10 transition-colors">
+                  <FileText className="w-3.5 h-3.5" />
+                  Facility Report
+                </Link>
+                <Link href="/dashboard/machines" className="hidden md:inline-flex rounded-full border border-white/8 bg-white/4 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-foreground)] hover:border-[var(--color-primary)]/25">
+                  Open fleet
+                </Link>
+              </div>
             </div>
             <div 
               className="grid gap-4 xl:gap-5" 

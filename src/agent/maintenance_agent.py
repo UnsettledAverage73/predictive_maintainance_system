@@ -223,7 +223,7 @@ class MaintenanceAgent:
 
         # Parallel Execution: SQL + Pinecone
         sql_task = loop.run_in_executor(executor, fetch_sql_context)
-        vector_task = loop.run_in_executor(executor, self.query_similar_issues, query, 5) # Increased top_k
+        vector_task = loop.run_in_executor(executor, self.query_similar_issues, query, machine_id, 5) # Increased top_k
 
         m_meta, p_context, sql_alerts, history_context, visual_context_memory, telemetry_context = await sql_task
         vector_context = await vector_task
@@ -231,34 +231,31 @@ class MaintenanceAgent:
         # 4. Construct Optimized Prompt
         system_prompt = f"""
         You are the Sovereign Industrial Intelligence Orchestrator. 
-        Your goal is to provide high-precision maintenance prescriptions using all available multimodal context.
+        Provide high-precision, concise maintenance prescriptions. 
 
-        STRATEGIC ASSET CONTEXT:
-        {m_meta}
+        ASSET: {m_meta}
         {p_context}
         
         {telemetry_context}
 
-        RECENT ANOMALIES (SQL):
-        {sql_alerts}
+        ANOMALIES: {sql_alerts}
 
         {visual_context_memory}
 
         {history_context}
 
-        INDUSTRIAL KNOWLEDGE BASE (RAG - Manuals & Logs):
-        {vector_context}
+        KNOWLEDGE BASE (RAG): {vector_context}
 
-        INSTRUCTIONS:
-        1. PRIORITIZE Ground Truth from "INDUSTRIAL KNOWLEDGE BASE" if relevant.
-        2. Use "VISUAL MEMORY" if the user's query refers to images or documents they previously uploaded. 
-           Synthesize information across MULTIPLE visual entries if the query requires it.
-        3. Use "RECENT CONVERSATION" to maintain context if the user asks follow-up questions.
-        4. If telemetry exceeds THRESHOLDS, flag it immediately.
-        5. Be technical, structured, and complete.
-        6. Use short sections with headings when useful.
-        7. Do not stop mid-analysis or mid-sentence.
-        8. Current Target: {machine_id}
+        OUTPUT GUIDELINES:
+        1. BE CONCISE. Use bullet points and bold text for key metrics/actions.
+        2. STRUCTURE: 
+           - **HEALTH SNAPSHOT**: 1-sentence status.
+           - **CRITICAL ANOMALIES**: List only breaches/threats.
+           - **ROOT CAUSE**: Most likely technical failure.
+           - **PRESCRIPTION**: Numbered, prioritized technical actions.
+        3. PRIORITY: Ground Truth (RAG) > Visual Memory > Telemetry.
+        4. TONE: Senior Engineer, urgent but calm, technical.
+        5. LANGUAGE: If user uses Hinglish, respond in clear technical English with brief Hinglish confirmation if needed.
         """
         
         # Cloud Inference
@@ -281,38 +278,44 @@ class MaintenanceAgent:
 
     def ingest_manual_pdf(self, machine_id: str, filename: str, pdf_bytes: bytes):
         """
-        Extracts text from industrial PDF manuals, chunks it, and indexes in Pinecone.
+        Extracts text from industrial PDF manuals, chunks it, and indexes in Pinecone with metadata.
         """
         if not self.pc or not self.index:
             return "Vector DB Offline"
 
         try:
             reader = PdfReader(io.BytesIO(pdf_bytes))
-            full_text = ""
-            for page in reader.pages:
-                full_text += page.extract_text() + "\n"
-
-            # Recursive Chunking (Simple implementation)
-            chunk_size = 800
-            overlap = 100
-            chunks = []
-            for i in range(0, len(full_text), chunk_size - overlap):
-                chunks.append(full_text[i : i + chunk_size])
-
             vectors = []
-            for i, chunk in enumerate(chunks):
-                embedding = self._get_embedding(chunk)
-                if embedding:
-                    vectors.append({
-                        "id": f"manual_{machine_id}_{int(time.time())}_{i}",
-                        "values": embedding,
-                        "metadata": {
-                            "machine_id": machine_id,
-                            "content": chunk,
-                            "source": filename,
-                            "type": "manual_chunk"
-                        }
-                    })
+            
+            # 1. Fetch Machine Type for better context filtering
+            from src.data.database import get_all_equipment_metadata
+            m_data = next((m for m in get_all_equipment_metadata() if m['id'] == machine_id), {})
+            machine_type = m_data.get('name', 'Generic')
+
+            for page_num, page in enumerate(reader.pages):
+                text = page.extract_text()
+                if not text: continue
+                
+                # Chunks per page
+                chunk_size = 800
+                overlap = 100
+                for i in range(0, len(text), chunk_size - overlap):
+                    chunk = text[i : i + chunk_size]
+                    embedding = self._get_embedding(chunk)
+                    if embedding:
+                        vectors.append({
+                            "id": f"manual_{machine_id}_{int(time.time())}_{page_num}_{i}",
+                            "values": embedding,
+                            "metadata": {
+                                "machine_id": machine_id,
+                                "machine_type": machine_type,
+                                "content": chunk,
+                                "source": filename,
+                                "page": page_num + 1,
+                                "type": "manual_chunk",
+                                "ingested_at": datetime.now().isoformat()
+                            }
+                        })
             
             if vectors:
                 # Upsert in batches of 50
@@ -321,7 +324,7 @@ class MaintenanceAgent:
                 
                 from src.data.database import register_manual
                 register_manual(machine_id, filename, "pdf", f"manual_{machine_id}")
-                return f"Ingested {len(vectors)} chunks from {filename}."
+                return f"Ingested {len(vectors)} chunks from {filename} ({len(reader.pages)} pages)."
             
             return "No text extracted from PDF."
         except Exception as e:
@@ -394,18 +397,27 @@ class MaintenanceAgent:
             return f"Synced {len(vectors)} records."
         return "No new data."
 
-    def query_similar_issues(self, query: str, top_k: int = 2) -> str:
-        if not self.pc or not self.index: return "Vector DB offline."
-        embedding = self._get_embedding(query)
-        if not embedding: return "Local embeddings offline."
-        
+    def query_similar_issues(self, query: str, machine_id: str = None, top_k: int = 3) -> str:
+        if not self.pc or not self.index: return ""
+
+        # 1. Enrich query with machine class context if available
+        machine_context = ""
+        if machine_id:
+            from src.data.database import get_machine_class
+            m_class = get_machine_class(machine_id)
+            machine_context = f"Machine Type: {m_class} | "
+
+        enriched_query = f"{machine_context}{query}"
+        embedding = self._get_embedding(enriched_query)
+        if not embedding: return ""
+
+        # 2. Vector Search (Cross-Asset Intelligence)
         results = self.index.query(vector=embedding, top_k=top_k, include_metadata=True)
         output = ""
         for res in results.matches:
             m = res.metadata
-            output += f"Past Case: {m.get('notes') or m.get('note')} | "
+            output += f"[Case Study: {m.get('equipment_name') or 'Similar Asset'}] {m.get('notes') or m.get('note')} | "
         return output
-
     def analyze_patterns(self) -> str:
         """Windowed Analysis: Only sends recent data to avoid 429 Rate Limits."""
         # 1. Get limited semantic context
@@ -656,95 +668,10 @@ class MaintenanceAgent:
             return json.load(f)
 
     def generate_prioritized_schedule(self) -> List[Dict[str, Any]]:
-        """
-        Generates a prioritized list of maintenance tasks using AI reasoning and live data.
-        Combines telemetry probability with textual log risk analysis.
-        """
-        from src.data import database
-        from src.data.analytics import calculate_failure_probability, calculate_log_risk_score
-        
-        all_equipment = database.get_all_equipment_metadata()
-        pending_tasks = database.get_all_pending_tasks()
-        
-        prioritized = []
-        
-        for eq in all_equipment:
-            # 1. Telemetry Analysis
-            health = database.get_machine_health_summary(eq['id'])
-            telemetry_prob, _ = calculate_failure_probability(health['telemetry'])
-            
-            # 2. Textual Log Analysis
-            text_history = database.get_machine_textual_history(eq['id'])
-            log_risk = calculate_log_risk_score(text_history)
-            
-            # 3. Unified Risk Scoring
-            # Final probability is the maximum of the two risk sources
-            final_risk = max(telemetry_prob, log_risk)
-            
-            # 4. Strategic Reasoning (AI-driven)
-            # Only call LLM if risk is significant to save tokens
-            ai_reason = ""
-            if final_risk > 20:
-                summary_logs = [log['note'] for log in text_history[:3]]
-                prompt = f"""
-                Analyze the following data for machine {eq['name']} ({eq['id']}):
-                - Telemetry Failure Prob: {telemetry_prob}%
-                - Recent Operator Notes: {json.dumps(summary_logs)}
-                - Recent SQL Alerts: {json.dumps(health['alerts'])}
-                
-                Provide a 1-sentence technical justification for the maintenance priority.
-                Keep it under 20 words.
-                """
-                ai_reason = self._get_cloud_inference("You are a senior maintenance engineer.", prompt, max_tokens=80)
-            else:
-                ai_reason = "Routine monitoring based on standard schedule."
+        """Generates the schedule tab priorities using the shared priority scheduler."""
+        from src.services.priority_scheduler import generate_prioritized_schedule
 
-            # 5. Task Generation or Update
-            is_critical = final_risk > 50 or health['alerts']
-            priority = "critical" if final_risk > 80 else ("high" if final_risk > 50 else ("medium" if final_risk > 20 else "low"))
-            
-            # Find if there's already a task for this machine
-            existing_task = next((t for t in pending_tasks if t['machine_id'] == eq['id']), None)
-            
-            if not existing_task and is_critical:
-                prioritized.append({
-                    "id": f"ai-gen-{eq['id']}",
-                    "machineId": eq['id'],
-                    "machineName": eq['name'],
-                    "title": f"Urgent Diagnostic: {eq['name']}",
-                    "description": f"AI-detected anomaly requires immediate inspection. Unified Risk: {final_risk}%.",
-                    "aiReason": ai_reason,
-                    "priority": priority,
-                    "status": "pending",
-                    "dueDate": datetime.now().isoformat(),
-                    "assignedTo": "Unassigned",
-                    "estimatedHours": 2.5,
-                    "createdAt": datetime.now().isoformat()
-                })
-            elif existing_task:
-                # Update existing task with AI context
-                existing_task_copy = dict(existing_task)
-                # Ensure priority is elevated if AI detects higher risk
-                priority_map = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-                if priority_map.get(priority, 3) < priority_map.get(existing_task_copy.get('priority', 'low'), 3):
-                    existing_task_copy['priority'] = priority
-                
-                existing_task_copy['aiReason'] = ai_reason
-                # Map to frontend camelCase
-                existing_task_copy['machineId'] = existing_task_copy.pop('machine_id')
-                existing_task_copy['machineName'] = existing_task_copy.pop('machine_name')
-                existing_task_copy['dueDate'] = existing_task_copy.pop('due_date')
-                existing_task_copy['title'] = existing_task_copy.pop('task_name')
-                prioritized.append(existing_task_copy)
-            elif not is_critical:
-                 # Add routine tasks even if not critical
-                 pass
-
-        # 6. Sort and Final Polish
-        priority_map = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-        prioritized.sort(key=lambda x: priority_map.get(x.get('priority', 'medium'), 2))
-        
-        self._last_schedule = prioritized[:12]
+        self._last_schedule = generate_prioritized_schedule()
         return self._last_schedule
 
 
