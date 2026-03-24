@@ -735,6 +735,47 @@ async def chat_vision(
         "image_count": len(files)
     }
 
+@app.get("/api/mitigation/history")
+async def get_mitigation_history(limit: int = 15):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT h.*, e.name as machine_name, e.machine_class 
+        FROM agent_history h
+        JOIN equipment e ON h.machine_id = e.id
+        WHERE h.session_id = 'MITIGATION-ENGINE'
+        ORDER BY h.timestamp DESC
+        LIMIT ?
+    """, (limit,))
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return rows
+
+@app.get("/api/mitigation/stats")
+async def get_mitigation_stats():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    # 1. Downtime Avoided (Heuristic: 210 mins per reroute)
+    cursor.execute("SELECT COUNT(*) FROM agent_history WHERE session_id = 'MITIGATION-ENGINE' AND content LIKE '%rerouted%'")
+    reroute_count = cursor.fetchone()[0]
+    
+    # 2. Cost Saved (Heuristic: 85,000 INR per reroute)
+    total_savings = reroute_count * 85000
+    
+    # 3. Active Reroutes
+    cursor.execute("SELECT id, name, machine_class FROM equipment WHERE status = 'peak_load' OR status = 'maintenance'")
+    active_machines = cursor.fetchall()
+    
+    conn.close()
+    return {
+        "rerouteCount": reroute_count,
+        "downtimeAvoidedMins": reroute_count * 210,
+        "totalSavingsInr": total_savings,
+        "activeMitigations": len(active_machines) // 2 # Rough pair count
+    }
+
 @app.get("/api/factory/stats")
 async def get_factory_stats():
     all_equipment = await get_all_equipment()

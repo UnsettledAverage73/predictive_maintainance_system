@@ -761,22 +761,23 @@ def seed_priority_scheduling_data():
     conn.commit()
     conn.close()
 
-def add_equipment(eq_id, name, line, protocol, plant_id='Hosur-01', sector='Electronics', agent_id=None):
+def add_equipment(eq_id, name, line, protocol, agent_id=None, machine_class='Generic Industrial'):
     """
-    Onboards a new physical asset into the Sovereign Matrix across global facilities.
+    Onboards a new physical asset into the Sovereign Matrix.
     """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     try:
         cursor.execute("""
-            INSERT OR REPLACE INTO equipment (id, name, production_line, plant_id, sector, protocol, agent_id, last_maintenance_date, next_scheduled_date, mtbf)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO equipment (id, name, production_line, protocol, agent_id, last_maintenance_date, next_scheduled_date, mtbf, machine_class)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            eq_id, name, line, plant_id, sector, protocol, 
+            eq_id, name, line, protocol, 
             agent_id or f"agt-{eq_id}", 
             datetime.now().date().isoformat(),
             (datetime.now() + timedelta(days=90)).date().isoformat(),
-            5000
+            5000,
+            machine_class
         ))
         conn.commit()
         return True
@@ -785,6 +786,22 @@ def add_equipment(eq_id, name, line, protocol, plant_id='Hosur-01', sector='Elec
         return False
     finally:
         conn.close()
+
+def update_machine_classes():
+    """Updates initial machines with specific classes for rerouting logic."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    classes = {
+        "CNC001": "CNC_LATHE_A1",
+        "CNC002": "CNC_LATHE_A1", # Candidate for rerouting
+        "CONV01": "ASSEMBLY_CONVEYOR_B1",
+        "HYD005": "HYDRAULIC_PRESS_C1",
+        "EXT002": "EXTRUSION_LINE_D1"
+    }
+    for eq_id, m_class in classes.items():
+        cursor.execute("UPDATE equipment SET machine_class = ? WHERE id = ?", (m_class, eq_id))
+    conn.commit()
+    conn.close()
 
 def get_all_equipment_metadata():
     """Retrieves all registered equipment metadata."""

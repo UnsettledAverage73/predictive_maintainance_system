@@ -203,16 +203,102 @@ export default function MachineReportPage({ params }: { params: Promise<{ id: st
                 <Settings2 className="w-5 h-5 text-[var(--color-primary)]" />
                 Component Wear Analysis
               </h3>
-              <div className="glass-panel p-5 rounded-2xl">
-                <div className="flex justify-between items-center mb-4">
-                  <span className="text-xs font-bold text-[var(--color-muted)]">Wear Index</span>
-                  <span className="text-lg font-black text-[var(--color-primary)]">{insights.wearModel.wearIndex.toFixed(1)}/10.0</span>
+              <div className="glass-panel p-6 rounded-2xl flex flex-col gap-6">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-muted)] block mb-1">Wear Condition Index</span>
+                    <span className={`text-2xl font-black ${insights.wearModel.wearIndex > 80 ? 'text-[var(--color-destructive)]' : insights.wearModel.wearIndex > 50 ? 'text-[var(--color-warning)]' : 'text-[var(--color-primary)]'}`}>
+                      {insights.wearModel.wearIndex.toFixed(1)}%
+                    </span>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-muted)] block mb-1">Remaining Useful Life (RUL)</span>
+                    <span className="text-2xl font-black text-white">{insights.wearModel.rulHours.toFixed(0)} Hours</span>
+                  </div>
                 </div>
-                <div className="w-full bg-white/5 rounded-full h-2">
-                  <div className="bg-[var(--color-primary)] h-full rounded-full" style={{ width: `${insights.wearModel.wearIndex * 10}%` }} />
+
+                <div className="space-y-2">
+                  <div className="flex justify-between text-[10px] font-bold uppercase tracking-tighter">
+                    <span className="text-[var(--color-muted)]">Optimal</span>
+                    <span className="text-[var(--color-warning)]">Critical</span>
+                  </div>
+                  <div className="w-full bg-white/5 rounded-full h-3 overflow-hidden border border-white/5 p-0.5">
+                    <div 
+                      className={`h-full rounded-full transition-all duration-1000 ${
+                        insights.wearModel.wearIndex > 80 ? 'bg-[var(--color-destructive)]' : 
+                        insights.wearModel.wearIndex > 50 ? 'bg-[var(--color-warning)]' : 
+                        'bg-[var(--color-primary)]'
+                      }`} 
+                      style={{ width: `${insights.wearModel.wearIndex}%` }} 
+                    />
+                  </div>
                 </div>
-                <p className="text-xs text-[var(--color-muted)] mt-4 italic font-medium">{insights.wearModel.whatIfScenario}</p>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-white/5 p-3 rounded-xl border border-white/5">
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-muted)] block mb-1">Runtime</span>
+                    <span className="text-sm font-bold">{insights.wearModel.currentRuntimeHours.toLocaleString()}h</span>
+                  </div>
+                  <div className="bg-white/5 p-3 rounded-xl border border-white/5">
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-muted)] block mb-1">OEM Life</span>
+                    <span className="text-sm font-bold">{insights.wearModel.oemRecommendedHours.toLocaleString()}h</span>
+                  </div>
+                </div>
+
+                <p className="text-xs text-[var(--color-muted)] italic font-medium bg-[var(--color-primary)]/5 p-3 rounded-lg border border-[var(--color-primary)]/10">
+                  <span className="text-[var(--color-primary)] font-bold">What-if: </span>
+                  {insights.wearModel.whatIfScenario}
+                </p>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* ROI and Financial Analysis */}
+        {insights && (
+          <div className="space-y-6">
+            <div className="flex items-center gap-2">
+              <Activity className="w-5 h-5 text-[var(--color-primary)]" />
+              <h3 className="text-lg font-bold uppercase tracking-widest">Maintenance Economics & ROI Analysis</h3>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+               <div className="glass-panel p-4 rounded-xl border-l-4 border-l-white/20">
+                 <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-muted)] block mb-1">Planned Maintenance</span>
+                 <span className="text-xl font-black text-white">₹{insights.costAnalysis.plannedCostInr.toLocaleString()}</span>
+               </div>
+               <div className="glass-panel p-4 rounded-xl border-l-4 border-l-[var(--color-destructive)]">
+                 <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-muted)] block mb-1">Reactive Repair (Est.)</span>
+                 <span className="text-xl font-black text-[var(--color-destructive)]">₹{insights.costAnalysis.reactiveCostInr.toLocaleString()}</span>
+               </div>
+               <div className="glass-panel p-4 rounded-xl border-l-4 border-l-[var(--color-primary)] bg-[var(--color-primary)]/5">
+                 <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-muted)] block mb-1">Potential Savings</span>
+                 <span className="text-xl font-black text-[var(--color-primary)]">₹{insights.costAnalysis.estimatedSavingsInr.toLocaleString()}</span>
+               </div>
+               <div className="glass-panel p-4 rounded-xl border-l-4 border-l-[var(--color-info)]">
+                 <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-muted)] block mb-1">ROI Label</span>
+                 <span className="text-sm font-black uppercase text-[var(--color-info)]">{insights.costAnalysis.roiLabel}</span>
+               </div>
+            </div>
+
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-6">
+              <h4 className="text-xs font-bold uppercase tracking-widest text-[var(--color-muted)] mb-4">Financial Projections & Assumptions</h4>
+              <ul className="grid grid-cols-1 md:grid-cols-2 gap-y-2 gap-x-8">
+                {insights.costAnalysis.assumptions.map((assumption, idx) => (
+                  <li key={idx} className="text-xs text-[var(--color-muted)] flex items-start gap-2">
+                    <div className="w-1 h-1 rounded-full bg-[var(--color-primary)] mt-1.5 shrink-0" />
+                    {assumption}
+                  </li>
+                ))}
+                <li className="text-xs text-[var(--color-muted)] flex items-start gap-2">
+                  <div className="w-1 h-1 rounded-full bg-[var(--color-primary)] mt-1.5 shrink-0" />
+                  Estimated Downtime Avoided: <strong>{insights.costAnalysis.downtimeCostInr.toLocaleString()} INR impact</strong>
+                </li>
+                <li className="text-xs text-[var(--color-muted)] flex items-start gap-2">
+                  <div className="w-1 h-1 rounded-full bg-[var(--color-primary)] mt-1.5 shrink-0" />
+                  Planned vs Reactive Cost Ratio: <strong>1:{insights.costAnalysis.plannedVsReactiveRatio.toFixed(1)}</strong>
+                </li>
+              </ul>
             </div>
           </div>
         )}

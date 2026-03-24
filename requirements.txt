@@ -25,3 +25,4 @@ boto3
 pypdf
 # Local Development
 # ollama (handled via direct API)
+openai

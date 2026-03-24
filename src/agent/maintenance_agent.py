@@ -2,11 +2,17 @@ import json
 import os
 import requests
 import time
+import sqlite3
 from typing import List, Dict, Any, Optional
 try:
     from groq import Groq
 except ImportError:
     Groq = None
+
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
 
 try:
     from sarvamai import SarvamAI
@@ -45,7 +51,15 @@ class MaintenanceAgent:
         self.local_model = "qwen2.5:0.5b"
         self.embed_model = "nomic-embed-text:latest"
         
-        # Cloud Fallback 1: Groq (Llama 3.1 8B for efficiency)
+        # Cloud Fallback 1: OpenAI (Primary for precision)
+        self.openai_key = os.getenv("OPENAI_API_KEY")
+        if self.openai_key and OpenAI:
+            self.openai_client = OpenAI(api_key=self.openai_key)
+            self.openai_model = 'gpt-4o-mini' # Optimized for industrial data
+        else:
+            self.openai_client = None
+
+        # Cloud Fallback 2: Groq (Llama 3.1 8B for efficiency)
         self.groq_key = os.getenv("GROQ_API_KEY")
         if self.groq_key and Groq:
             self.groq_client = Groq(api_key=self.groq_key)
@@ -419,32 +433,23 @@ class MaintenanceAgent:
             output += f"[Case Study: {m.get('equipment_name') or 'Similar Asset'}] {m.get('notes') or m.get('note')} | "
         return output
     def analyze_patterns(self) -> str:
-        """Windowed Analysis: Only sends recent data to avoid 429 Rate Limits."""
-        # 1. Get limited semantic context
+        """Windowed Analysis: Uses Route-based intelligence."""
+        # 1. Route 1 (Worker): Get limited semantic context
         semantic_context = self.query_similar_issues("machine noise, vibration, overheating", top_k=2)
 
-        # 2. Windowed context (Last 3 events only)
+        # 2. Windowed context
         recent_notes = self.data.get("operational_notes", [])[-3:]
         
         system_prompt = f"""
         You are a Senior Plant CTO. Provide a 1-sentence technical prescription.
-        Identify Indic code-mixed slang (Hinglish) if present.
         Historical Context: {semantic_context}
         """
 
         user_content = f"Recent Observations: {json.dumps(recent_notes)}"
 
-        # Attempt Sarvam for Multilingual edge
-        if self.sarvam_client:
-            try:
-                print(f"--- [SARVAM] Reasoning ---")
-                return self._get_sarvam_inference(system_prompt, user_content)
-            except:
-                pass
-
-        # Fallback to Groq
-        print(f"--- [GROQ] Reasoning ---")
-        return self._get_cloud_inference(system_prompt, user_content, max_tokens=350)
+        # 3. Route 2 (Brain): Detailed Reasoning
+        print(f"--- [BRAIN] Node (OpenAI) Reasoning ---")
+        return self._call_brain_node(system_prompt, user_content, max_tokens=350)
 
     def speech_to_text(
         self,
@@ -605,63 +610,59 @@ class MaintenanceAgent:
             return True
         return False
 
-    def _get_cloud_inference(self, system_prompt, user_content, max_tokens: int = 250) -> str:
-        if self.groq_client:
-            try:
-                response = self.groq_client.chat.completions.create(
-                    messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_content}],
-                    model=self.groq_model,
-                    max_tokens=max_tokens,
-                    temperature=0.2
-                )
-                content = response.choices[0].message.content
-                if self._response_looks_incomplete(content) and max_tokens >= 500:
-                    retry = self.groq_client.chat.completions.create(
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": f"{user_content}\n\nReturn a complete final answer. Finish all sections cleanly."}
-                        ],
-                        model=self.groq_model,
-                        max_tokens=max_tokens,
-                        temperature=0.2
-                    )
-                    retry_content = retry.choices[0].message.content
-                    if retry_content:
-                        content = retry_content
-                return content
-            except Exception as e:
-                print(f"Groq Error: {e}. Attempting local Ollama fallback...")
+    def _call_worker_node(self, system_prompt: str, user_content: str) -> str:
+        """Route 1: High-Volume Data Parsing (Groq/Llama 3.1 8B)"""
+        if not self.groq_client:
+            return self._call_vault_node(system_prompt, user_content) # Fallback to local
         
-        # Local Sovereign Fallback (Ollama)
+        try:
+            response = self.groq_client.chat.completions.create(
+                messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_content}],
+                model=self.groq_model,
+                max_tokens=300,
+                temperature=0.1
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            print(f"Worker Node Error: {e}")
+            return self._call_vault_node(system_prompt, user_content)
+
+    def _call_brain_node(self, system_prompt: str, user_content: str, max_tokens: int = 700) -> str:
+        """Route 2: Complex Diagnostics & Scheduling (OpenAI/GPT-4o-mini)"""
+        if not self.openai_client:
+            return self._call_worker_node(system_prompt, user_content) # Fallback to Groq
+        
+        try:
+            response = self.openai_client.chat.completions.create(
+                messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_content}],
+                model=self.openai_model,
+                max_tokens=max_tokens,
+                temperature=0.1
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            print(f"Brain Node Error: {e}")
+            return self._call_worker_node(system_prompt, user_content)
+
+    def _call_vault_node(self, system_prompt: str, user_content: str, max_tokens: int = 500) -> str:
+        """Route 3: Highly Confidential Edge Data (Local/Qwen 2.5)"""
         try:
             payload = {
                 "model": self.local_model,
                 "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_content}],
                 "stream": False,
-                "options": {"num_predict": max_tokens, "temperature": 0.2}
+                "options": {"num_predict": max_tokens, "temperature": 0.1}
             }
             response = requests.post(f"{self.ollama_base_url}/chat", json=payload, timeout=10)
             if response.status_code == 200:
-                content = response.json().get("message", {}).get("content", "Error: Empty Ollama response.")
-                if self._response_looks_incomplete(content) and max_tokens >= 500:
-                    retry_payload = {
-                        "model": self.local_model,
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": f"{user_content}\n\nReturn a complete final answer. Finish all sections cleanly."}
-                        ],
-                        "stream": False,
-                        "options": {"num_predict": max_tokens, "temperature": 0.2}
-                    }
-                    retry_response = requests.post(f"{self.ollama_base_url}/chat", json=retry_payload, timeout=10)
-                    if retry_response.status_code == 200:
-                        retry_content = retry_response.json().get("message", {}).get("content", "")
-                        if retry_content:
-                            content = retry_content
-                return content
-            return f"Error: Local AI offline (Status {response.status_code})"
+                return response.json().get("message", {}).get("content", "Error: Empty Local response.")
+            return f"Error: Local Vault offline (Status {response.status_code})"
         except Exception as e:
-            return f"Sovereign Error: All inference engines offline. {str(e)}"
+            return f"Vault Error: Local engine offline. {str(e)}"
+
+    def _get_cloud_inference(self, system_prompt, user_content, max_tokens: int = 250) -> str:
+        """Unified fallback for general queries, defaulting to Brain (OpenAI)."""
+        return self._call_brain_node(system_prompt, user_content, max_tokens=max_tokens)
 
     def _load_data(self) -> Dict[str, Any]:
         with open(self.data_path, "r") as f:
@@ -674,6 +675,78 @@ class MaintenanceAgent:
         self._last_schedule = generate_prioritized_schedule()
         return self._last_schedule
 
+
+    def mitigate_failure(self, machine_id: str, failure_type: str) -> Dict[str, Any]:
+        """
+        Autonomous Mitigation: Shuts down the failing machine and reroutes production.
+        """
+        from src.data.database import DB_PATH, log_agent_interaction
+        
+        # 1. Identify Candidate
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT machine_class FROM equipment WHERE id = ?", (machine_id,))
+        m_row = cursor.fetchone()
+        if not m_row: return {"success": False, "reason": "Machine not found"}
+        m_class = m_row['machine_class']
+        
+        # Find healthy same-class candidate
+        cursor.execute("""
+            SELECT id FROM equipment 
+            WHERE machine_class = ? AND id != ? AND status = 'online'
+            LIMIT 1
+        """, (m_class, machine_id))
+        candidate = cursor.fetchone()
+        
+        mitigation_actions = []
+        target_machine = candidate['id'] if candidate else None
+        
+        # 2. Issue Commands
+        commands = []
+        # Command A: Shutdown failing asset
+        commands.append({
+            "equipment_id": machine_id,
+            "action": "SHUTDOWN_IMMEDIATE",
+            "reason": f"Predicted {failure_type}",
+            "timestamp": time.time()
+        })
+        mitigation_actions.append(f"Initiated safe shutdown of {machine_id}")
+        
+        # Command B: Reroute if candidate exists
+        if target_machine:
+            commands.append({
+                "equipment_id": target_machine,
+                "action": "REROUTE_WORKLOAD",
+                "source_id": machine_id,
+                "timestamp": time.time()
+            })
+            mitigation_actions.append(f"Workload rerouted to {target_machine}")
+            
+            # Update DB statuses
+            cursor.execute("UPDATE equipment SET status = 'maintenance' WHERE id = ?", (machine_id,))
+            cursor.execute("UPDATE equipment SET status = 'peak_load' WHERE id = ?", (target_machine,))
+        else:
+            mitigation_actions.append("No suitable reroute candidate found. Production stalled.")
+            cursor.execute("UPDATE equipment SET status = 'critical' WHERE id = ?", (machine_id,))
+
+        conn.commit()
+        conn.close()
+        
+        # 3. Write to command file for IoT Ingestor
+        with open("data/commands.json", "w") as f:
+            json.dump(commands, f)
+            
+        log_msg = f"AUTONOMOUS MITIGATION: {', '.join(mitigation_actions)}"
+        log_agent_interaction(machine_id, "system", log_msg, session_id="MITIGATION-ENGINE")
+        
+        return {
+            "success": True,
+            "actions": mitigation_actions,
+            "target": target_machine,
+            "message": log_msg
+        }
 
     def ingest_human_fix(self, eq_id: str, action: str):
         """

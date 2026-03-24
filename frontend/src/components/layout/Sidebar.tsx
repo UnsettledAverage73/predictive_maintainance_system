@@ -2,13 +2,14 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Server, CalendarDays, MessageSquare, Settings, AlertTriangle, PlusCircle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { LayoutDashboard, Server, CalendarDays, MessageSquare, Settings, AlertTriangle, PlusCircle, ChevronLeft, ChevronRight, ShieldCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useMediaQuery } from '@/lib/hooks/useMediaQuery';
 
 const navItems = [
   { icon: LayoutDashboard, label: 'Overview', href: '/dashboard' },
   { icon: Server, label: 'Machines', href: '/dashboard/machines' },
+  { icon: ShieldCheck, label: 'Self-Healing', href: '/dashboard/mitigation' },
   { icon: AlertTriangle, label: 'Alerts', href: '/dashboard/alerts', badge: 3 },
   { icon: CalendarDays, label: 'Schedule', href: '/dashboard/schedule' },
   { icon: MessageSquare, label: 'AI Query', href: '/dashboard/query' },
