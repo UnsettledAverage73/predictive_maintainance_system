@@ -8,19 +8,37 @@ import { buildWebSocketUrl } from "@/lib/api";
 interface TelemetryChartProps {
   data: TelemetryPoint[];
   machineId?: string;
-  parameters: any[];
+  parameters: TelemetryParameter[];
   className?: string;
 }
+
+interface TelemetryParameter {
+  parameterKey: string;
+  displayName: string;
+  unit?: string;
+}
+
+interface ChartPoint extends TelemetryPoint {
+  time?: string;
+  timestamp?: string;
+  humidity?: number;
+  isAnomaly?: boolean;
+  alertReason?: string;
+  [key: string]: unknown;
+}
+
+const HUMIDITY_PARAMETER: TelemetryParameter = {
+  parameterKey: "humidity",
+  displayName: "Humidity",
+  unit: "%",
+};
 
 const COLORS = ["#00D4AA", "#EF4444", "#F59E0B", "#3B82F6", "#A855F7", "#EC4899", "#06B6D4"];
 
 export function TelemetryChart({ data: initialData, machineId, parameters, className }: TelemetryChartProps) {
   const [range, setRange] = useState('24h');
-  const [chartData, setChartData] = useState<any[]>(initialData);
-
-  useEffect(() => {
-    setChartData(initialData);
-  }, [initialData]);
+  const [streamData, setStreamData] = useState<ChartPoint[]>([]);
+  const chartData = [...(initialData as ChartPoint[]), ...streamData].slice(-100);
 
   useEffect(() => {
     if (!machineId) return;
@@ -29,18 +47,26 @@ export function TelemetryChart({ data: initialData, machineId, parameters, class
     const ws = new WebSocket(wsUrl);
 
     ws.onmessage = (event) => {
-      const point = JSON.parse(event.data);
-      setChartData(prev => {
+      const point = JSON.parse(event.data) as ChartPoint;
+      setStreamData(prev => {
         const newData = [...prev, {
-          timestamp: point.time,
-          ...point // Spread all keys (temperature, vibration, and any custom ones)
-        }];
+          timestamp: point.time || point.timestamp,
+          ...point
+        } as ChartPoint];
         return newData.slice(-100);
       });
     };
 
     return () => ws.close();
   }, [machineId]);
+
+  const chartParameters = [...parameters];
+  const hasHumiditySeries = chartParameters.some((param) => param.parameterKey === "humidity")
+    || chartData.some((point) => typeof point.humidity === "number");
+
+  if (hasHumiditySeries && !chartParameters.some((param) => param.parameterKey === "humidity")) {
+    chartParameters.push(HUMIDITY_PARAMETER);
+  }
 
   return (
     <div className={`glass-panel p-4 rounded-xl w-full flex flex-col ${className || ""}`}>
@@ -86,21 +112,24 @@ export function TelemetryChart({ data: initialData, machineId, parameters, class
                       <p className="text-[10px] text-[var(--color-muted)] mb-1 font-mono uppercase font-bold tracking-widest">
                         {new Date(label).toLocaleString()}
                       </p>
-                      
+
                       {dataPoint.isAnomaly && (
                         <div className="mb-2 p-2 bg-red-500/10 border border-red-500/20 rounded text-[11px]">
                           <span className="text-red-400 font-bold uppercase block mb-0.5">AI Detected Anomaly</span>
-                          <span className="text-[var(--color-foreground)] line-clamp-2 italic">"{dataPoint.alertReason}"</span>
+                          <span className="text-[var(--color-foreground)] line-clamp-2 italic">&quot;{dataPoint.alertReason}&quot;</span>
                         </div>
                       )}
 
                       <div className="space-y-1">
-                        {payload.map((entry: any, index: number) => (
+                        {payload.map((entry, index: number) => {
+                          const item = entry as { color?: string; name?: string; value?: string | number };
+                          return (
                           <div key={index} className="flex justify-between items-center gap-4">
-                            <span className="text-[11px]" style={{ color: entry.color }}>{entry.name}</span>
-                            <span className="text-[11px] font-mono font-bold">{entry.value}</span>
+                            <span className="text-[11px]" style={{ color: item.color }}>{item.name}</span>
+                            <span className="text-[11px] font-mono font-bold">{item.value}</span>
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   );
@@ -126,7 +155,7 @@ export function TelemetryChart({ data: initialData, machineId, parameters, class
             ))}
             
             {/* Dynamically render lines for every parameter in the registry */}
-            {parameters.map((param, index) => (
+            {chartParameters.map((param, index) => (
               <Line 
                 key={param.parameterKey}
                 type="monotone" 
@@ -145,4 +174,3 @@ export function TelemetryChart({ data: initialData, machineId, parameters, class
     </div>
   );
 }
-

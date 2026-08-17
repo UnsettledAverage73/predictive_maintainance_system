@@ -5,7 +5,7 @@ import { MachineCard } from "@/components/machines/MachineCard";
 import { MachineUsageChart } from "@/components/charts/MachineUsageChart";
 import { MachineCardSkeleton } from "@/components/machines/MachineCardSkeleton";
 import { Machine, Alert } from "@/types";
-import { Activity, AlertTriangle, ArrowRight, Calendar, FileText, Radar, Settings2, ShieldCheck, Sparkles } from "lucide-react";
+import { Activity, AlertTriangle, ArrowRight, Calendar, FileText, Radar, Settings2, ShieldCheck, Sparkles, Wifi, Radio } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
@@ -26,6 +26,21 @@ type BackendAlert = {
   timestamp: string;
 };
 
+type ConnectedSensor = {
+  equipment_id: string;
+  name: string;
+  protocol: string;
+  mac_address?: string | null;
+  sensor_kind?: string | null;
+  last_seen?: string | null;
+  temperature?: number | null;
+  humidity?: number | null;
+  vibration?: number | null;
+  telemetry_status?: string | null;
+  parameters?: Record<string, unknown>;
+  status: string;
+};
+
 const normalizeSeverity = (severity: string): Alert["severity"] => {
   const normalized = severity.toLowerCase();
   if (normalized === "critical" || normalized === "warning" || normalized === "info") {
@@ -39,6 +54,12 @@ export default function DashboardPage() {
   const [machines, setMachines] = useState<Machine[]>([]);
   const [stats, setStats] = useState<FactoryStats>({ globalRisk: 0, activeAlerts: 0, avgHealth: 100, factoryStatus: 'Optimal' });
   const [recommendations, setRecommendations] = useState<Alert[]>([]);
+  const [connectedSensors, setConnectedSensors] = useState<ConnectedSensor[]>([]);
+  const [pairMachineId, setPairMachineId] = useState("");
+  const [pairMacAddress, setPairMacAddress] = useState("");
+  const [pairSensorKind, setPairSensorKind] = useState("temperature");
+  const [pairMessage, setPairMessage] = useState<string | null>(null);
+  const [isPairing, setIsPairing] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isLive, setIsLive] = useState(false);
 
@@ -48,10 +69,12 @@ export default function DashboardPage() {
         const [equipmentData, factoryStats, alertsData] = await Promise.all([
           api.getEquipment() as Promise<Machine[]>,
           api.getFactoryStats() as Promise<FactoryStats>,
-          api.getAlerts() as Promise<BackendAlert[]>
+          api.getAlerts() as Promise<BackendAlert[]>,
         ]);
+        const sensorsData = await api.getConnectedSensors(10) as ConnectedSensor[];
         setMachines(equipmentData);
         setStats(factoryStats);
+        setConnectedSensors(sensorsData);
         
         const mappedAlerts: Alert[] = alertsData.slice(0, 3).map((a) => ({
           id: a.id.toString(),
@@ -79,6 +102,40 @@ export default function DashboardPage() {
 
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (!pairMachineId && machines.length > 0) {
+      setPairMachineId(machines.find((machine) => !machine.macAddress)?.id || machines[0].id);
+    }
+  }, [machines, pairMachineId]);
+
+  const handlePairEsp32 = async () => {
+    if (!pairMachineId || !pairMacAddress.trim()) {
+      setPairMessage("Select a machine and enter the ESP32 MAC.");
+      return;
+    }
+
+    setIsPairing(true);
+    setPairMessage(null);
+
+    try {
+      await api.pairEsp32(pairMachineId, pairMacAddress.trim(), pairSensorKind);
+      setPairMessage(`Paired ${pairMacAddress.trim()} to ${pairMachineId} as ${pairSensorKind}`);
+      setMachines((current) =>
+        current.map((machine) =>
+          machine.id === pairMachineId
+            ? { ...machine, macAddress: pairMacAddress.trim(), sensorKind: pairSensorKind }
+            : machine
+        )
+      );
+      setPairMacAddress("");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Pairing failed";
+      setPairMessage(message);
+    } finally {
+      setIsPairing(false);
+    }
+  };
 
   return (
     <div className="flex flex-col gap-6 animate-in fade-in duration-500 pb-8 xl:pb-12 w-full max-w-[1600px] mx-auto overflow-x-hidden">
@@ -189,6 +246,165 @@ export default function DashboardPage() {
         </div>
 
         <div className="flex-1 min-w-0 flex flex-col gap-6">
+          <section className="surface-card hairline rounded-[28px] p-5 md:p-6">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <div className="max-w-2xl">
+                <h2 className="text-sm font-bold uppercase tracking-[0.24em] text-[var(--color-muted)]">ESP32 Pairing</h2>
+                <p className="mt-1 text-sm text-[var(--color-muted)]">
+                  Bind a real ESP32 to an onboarded machine using its MAC address from the serial monitor.
+                </p>
+              </div>
+              <div className="flex flex-col gap-2 text-xs text-[var(--color-muted)] lg:text-right">
+                <span>Real-time bind: machine record + ESP32 MAC</span>
+                <span className="font-mono text-[var(--color-foreground)]">
+                  Example MAC: 3c:71:bf:52:d7:c8
+                </span>
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-3 lg:grid-cols-[1.2fr_1fr_1fr_auto]">
+              <label className="flex flex-col gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--color-muted)]">Machine</span>
+                <select
+                  value={pairMachineId}
+                  onChange={(event) => setPairMachineId(event.target.value)}
+                  className="rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-4 py-3 text-sm text-[var(--color-foreground)] outline-none focus:border-[var(--color-primary)]"
+                >
+                  {machines.map((machine) => (
+                    <option key={machine.id} value={machine.id}>
+                      {machine.name} ({machine.id})
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="flex flex-col gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--color-muted)]">ESP32 MAC</span>
+                <input
+                  value={pairMacAddress}
+                  onChange={(event) => setPairMacAddress(event.target.value)}
+                  placeholder="3c:71:bf:52:d7:c8"
+                  className="rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-4 py-3 font-mono text-sm text-[var(--color-foreground)] outline-none focus:border-[var(--color-primary)]"
+                />
+              </label>
+
+              <label className="flex flex-col gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--color-muted)]">Sensor Type</span>
+                <select
+                  value={pairSensorKind}
+                  onChange={(event) => setPairSensorKind(event.target.value)}
+                  className="rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-4 py-3 text-sm text-[var(--color-foreground)] outline-none focus:border-[var(--color-primary)]"
+                >
+                  <option value="temperature">Temperature only</option>
+                  <option value="temperature_humidity">Temperature + humidity</option>
+                  <option value="vibration">Vibration</option>
+                  <option value="temperature_vibration">Temperature + vibration</option>
+                  <option value="multi">Multi-sensor</option>
+                </select>
+              </label>
+
+              <button
+                onClick={handlePairEsp32}
+                disabled={isPairing || !machines.length}
+                className="self-end rounded-xl bg-[var(--color-primary)] px-5 py-3 text-sm font-semibold text-black transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isPairing ? "Pairing..." : "Pair ESP32"}
+              </button>
+            </div>
+
+            <div className="mt-4 flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-[var(--color-muted)]">Status:</span>
+              <span className="rounded-full border border-[var(--color-border)] bg-black/20 px-3 py-1 font-mono text-xs text-[var(--color-foreground)]">
+                {pairMessage || "Ready to pair"}
+              </span>
+            </div>
+          </section>
+
+          <section className="surface-card hairline rounded-[28px] p-5 md:p-6">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-bold uppercase tracking-[0.24em] text-[var(--color-muted)] flex items-center gap-2">
+                  <Wifi className="w-4 h-4 text-[var(--color-primary)]" />
+                  Connected Sensors
+                </h2>
+                <p className="mt-1 text-sm text-[var(--color-muted)]">ESP32 devices seen in the last 10 minutes.</p>
+              </div>
+              <span className="rounded-full border border-[var(--color-primary)]/20 bg-[var(--color-primary)]/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-primary)]">
+                {connectedSensors.length} online
+              </span>
+            </div>
+
+            {connectedSensors.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-[var(--color-border)] bg-black/10 p-6 text-sm text-[var(--color-muted)]">
+                No ESP32 telemetry has been received yet. Once the device posts to <span className="font-mono text-[var(--color-foreground)]">/api/iot/ingest</span>, it will appear here.
+              </div>
+            ) : (
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {connectedSensors.map((sensor) => (
+                  <div key={sensor.equipment_id} className="rounded-2xl border border-white/8 bg-black/15 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+                    <div className="mb-3 flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <Radio className={`h-4 w-4 ${sensor.status === 'connected' ? 'text-[var(--color-success)]' : 'text-[var(--color-warning)]'}`} />
+                          <h3 className="truncate font-semibold text-[var(--color-foreground)]">{sensor.name}</h3>
+                        </div>
+                        <p className="mt-1 truncate text-xs font-mono text-[var(--color-muted)]">{sensor.equipment_id}</p>
+                        <p className="mt-1 truncate text-[11px] font-mono text-[var(--color-muted)]">
+                          MAC: {sensor.mac_address || "Unknown"}
+                        </p>
+                        <p className="mt-1 truncate text-[11px] font-mono text-[var(--color-muted)]">
+                          Type: {sensor.sensor_kind || "unclassified"}
+                        </p>
+                      </div>
+                      <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${
+                        sensor.status === 'connected'
+                          ? 'border-[var(--color-success)]/20 bg-[var(--color-success)]/10 text-[var(--color-success)]'
+                          : 'border-[var(--color-warning)]/20 bg-[var(--color-warning)]/10 text-[var(--color-warning)]'
+                      }`}>
+                        {sensor.status === 'connected' ? 'Live telemetry' : 'Registered'}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-sm">
+                      <div className="rounded-xl border border-white/8 bg-black/10 p-3">
+                        <span className="block text-[10px] uppercase tracking-[0.18em] text-[var(--color-muted)]">Temp</span>
+                        <span className="mt-1 block font-mono text-[var(--color-foreground)]">
+                          {sensor.temperature ?? "--"}{sensor.temperature !== null && sensor.temperature !== undefined ? "°C" : ""}
+                        </span>
+                      </div>
+                      <div className="rounded-xl border border-white/8 bg-black/10 p-3">
+                        <span className="block text-[10px] uppercase tracking-[0.18em] text-[var(--color-muted)]">Humidity</span>
+                        <span className="mt-1 block font-mono text-[var(--color-foreground)]">
+                          {sensor.humidity ?? "--"}{sensor.humidity !== null && sensor.humidity !== undefined ? "%" : ""}
+                        </span>
+                      </div>
+                      <div className="rounded-xl border border-white/8 bg-black/10 p-3 col-span-2">
+                        <span className="block text-[10px] uppercase tracking-[0.18em] text-[var(--color-muted)]">Status</span>
+                        <span className="mt-1 block font-mono text-[var(--color-foreground)]">
+                          {sensor.telemetry_status || "OK"}
+                        </span>
+                      </div>
+                      <div className="rounded-xl border border-white/8 bg-black/10 p-3 col-span-2">
+                        <span className="block text-[10px] uppercase tracking-[0.18em] text-[var(--color-muted)]">Last Seen</span>
+                        <span className="mt-1 block font-mono text-[var(--color-foreground)]">
+                          {sensor.last_seen ? new Date(sensor.last_seen).toLocaleString() : "Awaiting first packet"}
+                        </span>
+                      </div>
+                      {sensor.sensor_kind === "temperature" || sensor.sensor_kind === "temperature_humidity" || sensor.sensor_kind === "temperature_vibration" ? (
+                        <div className="rounded-xl border border-white/8 bg-black/10 p-3 col-span-2">
+                          <span className="block text-[10px] uppercase tracking-[0.18em] text-[var(--color-muted)]">Telemetry hint</span>
+                          <span className="mt-1 block text-xs leading-5 text-[var(--color-foreground)]">
+                            Send `temperature`, `humidity`, and `status` every 1-5 seconds to keep the MQTT card live. Add `vibration_rms` only if the device also exposes vibration.
+                          </span>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
           <MachineUsageChart />
           
           <div>

@@ -18,6 +18,8 @@ export interface Machine {
   failureRisk?: 'high' | 'medium' | 'low';
   temperature?: number;
   vibration?: number;
+  macAddress?: string | null;
+  sensorKind?: string | null;
 }
 
 export interface MaintenanceTask {
@@ -61,11 +63,16 @@ export interface MaintenanceTask {
 }
 
 export interface TelemetryPoint {
-  timestamp: string;
-  temperature: number;
-  vibration: number;
-  pressure: number;
-  rpm: number;
+  timestamp?: string;
+  time?: string;
+  temperature?: number;
+  humidity?: number;
+  vibration?: number;
+  pressure?: number;
+  rpm?: number;
+  status?: string;
+  isAnomaly?: boolean;
+  alertReason?: string;
 }
 
 export interface Alert {

@@ -30,6 +30,12 @@ interface ParameterView {
   is_visible?: boolean;
 }
 
+interface TelemetrySnapshot extends TelemetryPoint {
+  humidity?: number;
+  status?: string;
+  time?: string;
+}
+
 export default function MachineReportPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
   const idStr = resolvedParams.id;
@@ -85,6 +91,8 @@ export default function MachineReportPage({ params }: { params: Promise<{ id: st
     await generatePDF('report-content', `Machine_Report_${idStr}_${new Date().toISOString().split('T')[0]}`);
     setIsGenerating(false);
   };
+
+  const latestTelemetry = telemetry.length > 0 ? (telemetry[telemetry.length - 1] as TelemetrySnapshot) : null;
 
   if (isLoading || !machine) {
     return (
@@ -168,6 +176,34 @@ export default function MachineReportPage({ params }: { params: Promise<{ id: st
           <div className="flex items-center gap-2 mb-2">
             <Activity className="w-5 h-5 text-[var(--color-primary)]" />
             <h3 className="text-lg font-bold uppercase tracking-widest">24-Hour Telemetry Matrix</h3>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="glass-panel p-4 rounded-xl border border-white/10">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-muted)] block mb-1">Live Temp</span>
+              <span className="text-xl font-black font-mono text-white">
+                {typeof latestTelemetry?.temperature === "number" ? `${latestTelemetry.temperature.toFixed(1)}°C` : "--"}
+              </span>
+            </div>
+            <div className="glass-panel p-4 rounded-xl border border-white/10">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-muted)] block mb-1">Live Humidity</span>
+              <span className="text-xl font-black font-mono text-white">
+                {typeof latestTelemetry?.humidity === "number" ? `${latestTelemetry.humidity.toFixed(0)}%` : "--"}
+              </span>
+            </div>
+            <div className="glass-panel p-4 rounded-xl border border-white/10">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-muted)] block mb-1">Telemetry Status</span>
+              <span className="text-xl font-black font-mono text-[var(--color-primary)]">
+                {latestTelemetry?.status || "OK"}
+              </span>
+            </div>
+            <div className="glass-panel p-4 rounded-xl border border-white/10">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-muted)] block mb-1">Last Packet</span>
+              <span className="text-sm font-mono text-white">
+                {latestTelemetry?.time || latestTelemetry?.timestamp
+                  ? new Date(latestTelemetry.time || latestTelemetry.timestamp || "").toLocaleString()
+                  : "--"}
+              </span>
+            </div>
           </div>
           <div className="bg-black/20 rounded-2xl border border-white/5 p-4">
              <TelemetryChart 

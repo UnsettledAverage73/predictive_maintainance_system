@@ -4,17 +4,26 @@ import base64
 import asyncio
 import time
 import json
+import socket
 import redis.asyncio as redis
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Depends, status
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Depends, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from src.agent.maintenance_agent import MaintenanceAgent
 from src.data.analytics import calculate_failure_probability
 from src.agent.reporter import SovereignReporter
 from src.agent.cloud_provisioner import router as cloud_router
-from src.data.database import init_db, log_alert_feedback
+from src.data.database import (
+    init_db,
+    log_alert_feedback,
+    add_equipment,
+    get_equipment_metadata,
+    seed_common_parameters,
+    log_sensor_reading,
+    log_telemetry_point,
+)
 from src.services.machine_insights import get_machine_insights
 from src.services.priority_scheduler import generate_prioritized_schedule
 from src.notifications.whatsapp import get_config, save_config
@@ -75,6 +84,38 @@ class ConnectionTestRequest(BaseModel):
     url: str
     port: Optional[str] = None
 
+class NetworkEndpointResponse(BaseModel):
+    host: str
+    local_ip: str
+    port: int
+    http_base_url: str
+    ws_base_url: str
+
+class ConnectedSensorResponse(BaseModel):
+    equipment_id: str
+    name: str
+    protocol: str
+    mac_address: Optional[str] = None
+    sensor_kind: Optional[str] = None
+    last_seen: Optional[str] = None
+    temperature: Optional[float] = None
+    humidity: Optional[float] = None
+    vibration: Optional[float] = None
+    telemetry_status: Optional[str] = None
+    parameters: Optional[Dict[str, Any]] = None
+    status: str
+
+class IoTIngestRequest(BaseModel):
+    equipment_id: str
+    mac_address: Optional[str] = None
+    sensor_kind: Optional[str] = None
+    timestamp: Optional[Any] = None
+    temperature: Optional[float] = None
+    humidity: Optional[float] = None
+    vibration: Optional[float] = None
+    parameters: Optional[Dict[str, Any]] = None
+    source: Optional[str] = "esp32"
+
 class WhatsAppRequest(BaseModel):
     number: str
 
@@ -86,6 +127,10 @@ class TaskUpdate(BaseModel):
 class FeedbackRequest(BaseModel):
     score: int
     notes: Optional[str] = None
+
+class PairEsp32Request(BaseModel):
+    mac_address: str
+    sensor_kind: Optional[str] = None
 
 
 def resolve_virtual_task(task_id: str) -> Optional[Dict[str, Any]]:
@@ -106,6 +151,143 @@ def resolve_virtual_task(task_id: str) -> Optional[Dict[str, Any]]:
         return next((t for t in current_ai_tasks if t.get("machineId") == machine_id), None)
 
     return None
+
+
+def _coerce_ingest_float(value: Any) -> Optional[float]:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_ingest_timestamp(value: Any) -> str:
+    if value is None:
+        return datetime.now().isoformat()
+
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(value).isoformat()
+
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return datetime.now().isoformat()
+        try:
+            return datetime.fromisoformat(raw).isoformat()
+        except ValueError:
+            try:
+                return datetime.fromtimestamp(float(raw)).isoformat()
+            except (TypeError, ValueError):
+                return datetime.now().isoformat()
+
+    return datetime.now().isoformat()
+
+
+def _prepare_ingest_payload(req: IoTIngestRequest) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "equipment_id": req.equipment_id,
+        "timestamp": _normalize_ingest_timestamp(req.timestamp),
+    }
+    if req.mac_address:
+        payload["mac_address"] = req.mac_address
+    if req.sensor_kind:
+        payload["sensor_kind"] = req.sensor_kind
+
+    if req.temperature is not None:
+        payload["temperature"] = req.temperature
+    if req.humidity is not None:
+        payload["humidity"] = req.humidity
+    if req.vibration is not None:
+        payload["vibration"] = req.vibration
+
+    parameters = dict(req.parameters or {})
+    for key in ("temperature", "humidity", "vibration", "vibration_rms", "pressure", "rpm", "current_draw", "status", "telemetry_status"):
+        if key in parameters:
+            payload[key] = parameters[key]
+
+    for key, value in parameters.items():
+        if key not in payload:
+            payload[key] = value
+
+    payload["parameters"] = parameters
+    payload["source"] = req.source or "esp32"
+    return payload
+
+
+def _normalize_mac_address(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    cleaned = value.strip().lower().replace("-", ":")
+    if not cleaned:
+        return None
+    parts = [part for part in cleaned.split(":") if part]
+    if len(parts) == 6:
+        try:
+            return ":".join(f"{int(part, 16):02x}" for part in parts)
+        except ValueError:
+            return cleaned
+    return cleaned
+
+
+def _find_equipment_by_mac(mac_address: Optional[str]) -> Optional[str]:
+    normalized = _normalize_mac_address(mac_address)
+    if not normalized:
+        return None
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, mac_address FROM equipment WHERE mac_address IS NOT NULL")
+    rows = cursor.fetchall()
+    conn.close()
+
+    for eq_id, stored_mac in rows:
+        if _normalize_mac_address(stored_mac) == normalized:
+            return eq_id
+    return None
+
+
+def _normalize_sensor_kind(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    cleaned = value.strip().lower().replace(" ", "_")
+    aliases = {
+        "temp": "temperature",
+        "temperature": "temperature",
+        "temperature_only": "temperature",
+        "temp_only": "temperature",
+        "temp_humidity": "temperature_humidity",
+        "temperature_humidity": "temperature_humidity",
+        "humidity": "temperature_humidity",
+        "vibration": "vibration",
+        "vib": "vibration",
+        "combined": "multi",
+        "multi": "multi",
+    }
+    return aliases.get(cleaned, cleaned)
+
+
+def _resolve_http_base_url(host_header: Optional[str] = None) -> str:
+    base_host = (host_header or "").strip()
+    if not base_host:
+        base_host = os.getenv("BACKEND_HOST", "127.0.0.1:8000")
+
+    if "://" in base_host:
+        return base_host.rstrip("/")
+
+    return f"http://{base_host}".rstrip("/")
+
+
+def _detect_lan_ip() -> str:
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.connect(("8.8.8.8", 80))
+            return sock.getsockname()[0]
+        finally:
+            sock.close()
+    except Exception:
+        return "127.0.0.1"
 
 # App Initialization
 app = FastAPI(title="Sovereign Predictive Maintenance API")
@@ -474,6 +656,231 @@ async def test_connection(request: ConnectionTestRequest):
         raise HTTPException(status_code=400, detail=f"Connection refused by {request.url}")
     return {"status": "success", "latency_ms": 42, "message": f"Handshake with {request.protocol} broker established."}
 
+@app.get("/api/network/endpoint", response_model=NetworkEndpointResponse)
+async def get_network_endpoint(request: Request):
+    host_header = request.headers.get("host") if request and request.headers else None
+    local_ip = _detect_lan_ip()
+    http_base_url = _resolve_http_base_url(host_header)
+    if http_base_url in {"http://127.0.0.1:8000", "http://localhost:8000"}:
+        http_base_url = f"http://{local_ip}:8000"
+    ws_base_url = http_base_url.replace("http://", "ws://").replace("https://", "wss://")
+    host = host_header or http_base_url.removeprefix("http://").removeprefix("https://")
+    port = 443 if http_base_url.startswith("https://") else 80
+    if ":" in host and host.count(":") == 1:
+        try:
+            port = int(host.rsplit(":", 1)[1])
+        except ValueError:
+            pass
+    return {
+        "host": host,
+        "local_ip": local_ip,
+        "port": port,
+        "http_base_url": http_base_url,
+        "ws_base_url": ws_base_url,
+    }
+
+@app.get("/api/iot/connected-sensors", response_model=List[ConnectedSensorResponse])
+async def get_connected_sensors(minutes: int = 5):
+    if minutes <= 0:
+        minutes = 5
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    connected = []
+
+    cursor.execute("SELECT id, name, protocol, mac_address, sensor_kind FROM equipment ORDER BY name ASC")
+    equipment_rows = cursor.fetchall()
+    for row in equipment_rows:
+        equipment_id = row["id"]
+        protocol = (row["protocol"] or "HTTP").upper()
+        stored_mac = row["mac_address"]
+        sensor_kind = row["sensor_kind"]
+
+        cursor.execute(
+            """
+            SELECT timestamp, temperature, vibration
+            FROM sensor_readings
+            WHERE equipment_id = ?
+              AND timestamp > datetime('now', '-' || ? || ' minutes')
+            ORDER BY timestamp DESC
+            LIMIT 1
+            """,
+            (equipment_id, minutes),
+        )
+        legacy_row = cursor.fetchone()
+
+        cursor.execute(
+            """
+            SELECT timestamp, parameter_key, value, string_value
+            FROM telemetry_readings
+            WHERE machine_id = ?
+              AND timestamp > datetime('now', '-' || ? || ' minutes')
+            ORDER BY timestamp DESC, id DESC
+            LIMIT 20
+            """,
+            (equipment_id, minutes),
+        )
+        telemetry_rows = cursor.fetchall()
+
+        latest_time = None
+        temperature = None
+        humidity = None
+        vibration = None
+        telemetry_status = None
+        parameters: Dict[str, Any] = {}
+
+        if legacy_row:
+            latest_time = legacy_row["timestamp"]
+            temperature = legacy_row["temperature"]
+            vibration = legacy_row["vibration"]
+
+        for tele_row in telemetry_rows:
+            key = tele_row["parameter_key"]
+            value = tele_row["value"] if tele_row["value"] is not None else tele_row["string_value"]
+            parameters[key] = value
+            if tele_row["timestamp"] and (latest_time is None or tele_row["timestamp"] > latest_time):
+                latest_time = tele_row["timestamp"]
+            if key == "temperature" and temperature is None:
+                temperature = tele_row["value"]
+            if key == "humidity" and humidity is None:
+                humidity = tele_row["value"]
+            if key in {"vibration", "vibration_rms"} and vibration is None:
+                vibration = tele_row["value"]
+            if key in {"status", "telemetry_status"} and telemetry_status is None:
+                telemetry_status = str(value) if value is not None else None
+
+        if not latest_time:
+            if protocol != "HTTP":
+                continue
+            connected.append({
+                "equipment_id": equipment_id,
+                "name": row["name"] or equipment_id,
+                "protocol": row["protocol"] or "HTTP",
+                "mac_address": stored_mac,
+                "sensor_kind": sensor_kind,
+                "last_seen": None,
+                "temperature": None,
+                "humidity": None,
+                "vibration": None,
+                "telemetry_status": None,
+                "parameters": {},
+                "status": "registered",
+            })
+            continue
+
+        connected.append({
+            "equipment_id": equipment_id,
+            "name": row["name"] or equipment_id,
+            "protocol": row["protocol"] or "HTTP",
+            "mac_address": stored_mac,
+            "sensor_kind": sensor_kind,
+            "last_seen": latest_time,
+            "temperature": temperature,
+            "humidity": humidity,
+            "vibration": vibration,
+            "telemetry_status": telemetry_status,
+            "parameters": parameters,
+            "status": "connected" if latest_time else "registered",
+        })
+
+    conn.close()
+    connected.sort(key=lambda item: item["last_seen"] or "", reverse=True)
+    return connected
+
+@app.post("/api/iot/ingest")
+async def ingest_iot_telemetry(request: IoTIngestRequest):
+    payload = _prepare_ingest_payload(request)
+    equipment_id = payload["equipment_id"]
+    timestamp = payload["timestamp"]
+    normalized_mac = _normalize_mac_address(payload.get("mac_address"))
+    matched_equipment_id = _find_equipment_by_mac(normalized_mac) if normalized_mac else None
+    if matched_equipment_id:
+        equipment_id = matched_equipment_id
+
+    equipment_meta = get_equipment_metadata(equipment_id)
+    if not equipment_meta:
+        add_equipment(
+            eq_id=equipment_id,
+            name=equipment_id,
+            line="ESP32",
+            protocol="HTTP",
+            mac_address=normalized_mac,
+            sensor_kind=_normalize_sensor_kind(payload.get("sensor_kind")),
+        )
+        seed_common_parameters(equipment_id)
+    elif normalized_mac:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE equipment SET mac_address = ?, sensor_kind = COALESCE(?, sensor_kind) WHERE id = ?",
+            (normalized_mac, _normalize_sensor_kind(payload.get("sensor_kind")), equipment_id),
+        )
+        conn.commit()
+        conn.close()
+
+    temp = _coerce_ingest_float(payload.get("temperature"))
+    humidity = _coerce_ingest_float(payload.get("humidity"))
+    vib = _coerce_ingest_float(payload.get("vibration"))
+    log_sensor_reading(equipment_id, temp if temp is not None else 0.0, vib if vib is not None else 0.0)
+
+    telemetry_fields = payload.get("parameters") or {}
+    telemetry_fields = {**telemetry_fields}
+    for key in ("temperature", "humidity", "vibration", "vibration_rms", "pressure", "rpm", "current_draw", "status", "telemetry_status"):
+        if key in payload:
+            telemetry_fields[key] = payload[key]
+
+    for key, value in telemetry_fields.items():
+        numeric_value = _coerce_ingest_float(value)
+        if numeric_value is not None:
+            log_telemetry_point(equipment_id, key, numeric_value)
+        else:
+            log_telemetry_point(equipment_id, key, None, str(value))
+
+    try:
+        await r.publish(REDIS_CHANNEL, json.dumps(payload))
+    except Exception as exc:
+        print(f"Redis Publish Error: {exc}")
+
+    return {
+        "status": "success",
+        "equipment_id": equipment_id,
+        "timestamp": timestamp,
+        "stored": True,
+        "fields_logged": len(telemetry_fields),
+    }
+
+@app.post("/api/equipment/{equipment_id}/pair-esp32")
+async def pair_esp32_device(equipment_id: str, request: PairEsp32Request):
+    normalized_mac = _normalize_mac_address(request.mac_address)
+    if not normalized_mac:
+        raise HTTPException(status_code=400, detail="Invalid ESP32 MAC address")
+
+    equipment = get_equipment_metadata(equipment_id)
+    if not equipment:
+        raise HTTPException(status_code=404, detail="Equipment not found")
+
+    existing_match = _find_equipment_by_mac(normalized_mac)
+    if existing_match and existing_match != equipment_id:
+        raise HTTPException(status_code=409, detail=f"MAC already paired with {existing_match}")
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE equipment SET mac_address = ?, sensor_kind = COALESCE(?, sensor_kind) WHERE id = ?",
+        (normalized_mac, _normalize_sensor_kind(request.sensor_kind), equipment_id),
+    )
+    conn.commit()
+    conn.close()
+
+    return {
+        "status": "success",
+        "equipment_id": equipment_id,
+        "mac_address": normalized_mac,
+        "sensor_kind": _normalize_sensor_kind(request.sensor_kind),
+        "message": f"ESP32 {normalized_mac} paired to {equipment_id}"
+    }
+
 @app.post("/api/equipment")
 async def onboard_machine(request: OnboardRequest):
     from src.data.database import add_equipment, seed_common_parameters, add_parameter
@@ -514,6 +921,8 @@ async def get_all_equipment():
                     "plantId": eq.get("plant_id", "Hosur-01"),
                     "sector": eq.get("sector", "Electronics"),
                     "protocol": eq["protocol"],
+                    "macAddress": eq.get("mac_address"),
+                    "sensorKind": eq.get("sensor_kind"),
                     "status": "critical" if last[0] > 130 or prob > 80 else ("warning" if last[0] > 110 or prob > 50 else "online"),
                     "temperature": round(last[0], 1),
                     "vibration": round(last[1], 2),
@@ -537,6 +946,8 @@ async def get_all_equipment():
                 "name": m["name"],
                 "productionLine": m["production_line"],
                 "protocol": m["protocol"],
+                "macAddress": m.get("mac_address"),
+                "sensorKind": m.get("sensor_kind"),
                 "status": m.get("status", "online"),
                 "riskScore": 0,
                 "healthScore": 100

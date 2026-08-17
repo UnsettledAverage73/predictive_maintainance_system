@@ -3,8 +3,6 @@ import pandas as pd
 import sqlite3
 import plotly.express as px
 import time
-from datetime import datetime
-import os
 
 # --- ENTERPRISE GOVERNANCE: AUTHENTICATION ---
 # In a real enterprise app, use a proper Auth provider or hashed DB.
@@ -52,37 +50,86 @@ refresh_rate = st.sidebar.slider("Refresh Rate (seconds)", 2, 30, 5)
 
 def load_data():
     conn = sqlite3.connect(DB_PATH)
-    sensors_df = pd.read_sql_query("SELECT * FROM sensor_readings ORDER BY timestamp DESC LIMIT 200", conn)
+    telemetry_df = pd.read_sql_query(
+        """
+        SELECT machine_id, parameter_key, value, string_value, timestamp
+        FROM telemetry_readings
+        ORDER BY timestamp DESC
+        LIMIT 500
+        """,
+        conn,
+    )
     alerts_df = pd.read_sql_query("SELECT * FROM ai_alerts ORDER BY timestamp DESC LIMIT 50", conn)
     conn.close()
-    return sensors_df, alerts_df
+    return telemetry_df, alerts_df
+
+def build_latest_snapshot(telemetry_df):
+    if telemetry_df.empty:
+        return telemetry_df, pd.DataFrame()
+
+    df = telemetry_df.copy()
+    df["reading"] = df["value"].where(df["value"].notna(), df["string_value"])
+    df = df.sort_values("timestamp")
+
+    latest = df.pivot_table(
+        index="machine_id",
+        columns="parameter_key",
+        values="reading",
+        aggfunc="last",
+    )
+    latest["last_seen"] = df.groupby("machine_id")["timestamp"].max()
+    latest = latest.reset_index()
+
+    for column in ("temperature", "humidity", "vibration", "rpm", "current_draw"):
+        if column in latest.columns:
+            latest[column] = pd.to_numeric(latest[column], errors="coerce")
+
+    return df, latest
 
 placeholder = st.empty()
 
 while True:
-    sensors, alerts = load_data()
+    telemetry, alerts = load_data()
+    telemetry, latest = build_latest_snapshot(telemetry)
     
     with placeholder.container():
         # Unified View for all users
-        m1, m2, m3 = st.columns(3)
+        m1, m2, m3, m4 = st.columns(4)
         with m1:
-            st.metric("Active Assets", "4")
+            st.metric("Active Devices", latest["machine_id"].nunique() if not latest.empty else 0)
         with m2:
             st.metric("Critical Alerts (24h)", len(alerts))
         with m3:
-            st.metric("System Health", "92%", "-2%")
+            avg_temp = latest["temperature"].dropna().mean() if not latest.empty and "temperature" in latest else None
+            st.metric("Avg Temp", f"{avg_temp:.1f}°C" if pd.notna(avg_temp) else "--")
+        with m4:
+            avg_humidity = latest["humidity"].dropna().mean() if not latest.empty and "humidity" in latest else None
+            st.metric("Avg Humidity", f"{avg_humidity:.0f}%" if pd.notna(avg_humidity) else "--")
 
         # Sensor Visualizations (Shared Access)
-        st.write("### Live Telemetry Stream")
+        st.write("### Live MQTT Telemetry Stream")
         c1, c2 = st.columns(2)
         
-        if not sensors.empty:
+        if not telemetry.empty:
             with c1:
-                fig_temp = px.line(sensors, x='timestamp', y='temperature', color='equipment_id', title="Temp Monitor (°C)")
+                temp_df = telemetry[telemetry["parameter_key"] == "temperature"].copy()
+                temp_df["value"] = pd.to_numeric(temp_df["value"], errors="coerce")
+                fig_temp = px.line(temp_df, x="timestamp", y="value", color="machine_id", title="Temperature Monitor (°C)")
+                fig_temp.update_layout(yaxis_title="°C")
                 st.plotly_chart(fig_temp, use_container_width=True)
             with c2:
-                fig_vib = px.line(sensors, x='timestamp', y='vibration', color='equipment_id', title="Vibration Analysis (mm/s)")
-                st.plotly_chart(fig_vib, use_container_width=True)
+                humidity_df = telemetry[telemetry["parameter_key"] == "humidity"].copy()
+                humidity_df["value"] = pd.to_numeric(humidity_df["value"], errors="coerce")
+                fig_humidity = px.line(humidity_df, x="timestamp", y="value", color="machine_id", title="Humidity Monitor (%)")
+                fig_humidity.update_layout(yaxis_title="%")
+                st.plotly_chart(fig_humidity, use_container_width=True)
+        else:
+            st.info("Waiting for MQTT packets on `sensor/telemetry`.")
+
+        if not latest.empty:
+            st.write("### Latest MQTT Packet Snapshot")
+            snapshot_cols = [col for col in ["machine_id", "temperature", "humidity", "status", "last_seen"] if col in latest.columns]
+            st.dataframe(latest[snapshot_cols].sort_values("last_seen", ascending=False), use_container_width=True)
 
         # AI STRATEGIC LAYER
         st.write("### 🧠 AI Strategic Prescriptions")
@@ -96,6 +143,6 @@ while True:
 
         # Raw Logs (Shared for debugging)
         st.write("### Factory Operations Feed")
-        st.dataframe(sensors.head(15), use_container_width=True)
+        st.dataframe(telemetry.head(15), use_container_width=True)
 
     time.sleep(refresh_rate)

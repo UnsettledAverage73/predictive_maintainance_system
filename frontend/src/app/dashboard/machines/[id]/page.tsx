@@ -45,6 +45,12 @@ interface ManualHistoryRow {
   parts_replaced?: string;
 }
 
+interface TelemetrySnapshot extends TelemetryPoint {
+  humidity?: number;
+  status?: string;
+  time?: string;
+}
+
 const TelemetryChart = dynamic(() => import('@/components/charts/TelemetryChart').then(mod => mod.TelemetryChart), { 
   ssr: false,
   loading: () => <div className="h-[350px] w-full bg-[#1C2128]/50 animate-pulse rounded-xl" />
@@ -152,6 +158,7 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
 
   const healthScore = machine.healthScore ?? Math.max(0, 100 - machine.riskScore);
   const minutesToFailure = machine.minutesToFailure ?? null;
+  const latestTelemetry = telemetry.length > 0 ? (telemetry[telemetry.length - 1] as TelemetrySnapshot) : null;
 
   return (
     <div className="flex flex-col gap-6 animate-in fade-in duration-500 pb-20">
@@ -215,6 +222,35 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
             {parameters.filter((p) => p.isVisible ?? p.is_visible).map((param) => (
               <ParameterCard key={param.id} parameter={param} />
             ))}
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="glass-panel p-4 rounded-xl border border-white/10">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-muted)] block mb-1">Live Temp</span>
+              <span className="text-2xl font-black font-mono text-white">
+                {typeof latestTelemetry?.temperature === "number" ? `${latestTelemetry.temperature.toFixed(1)}°C` : "--"}
+              </span>
+            </div>
+            <div className="glass-panel p-4 rounded-xl border border-white/10">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-muted)] block mb-1">Live Humidity</span>
+              <span className="text-2xl font-black font-mono text-white">
+                {typeof latestTelemetry?.humidity === "number" ? `${latestTelemetry.humidity.toFixed(0)}%` : "--"}
+              </span>
+            </div>
+            <div className="glass-panel p-4 rounded-xl border border-white/10">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-muted)] block mb-1">Telemetry Status</span>
+              <span className="text-2xl font-black font-mono text-[var(--color-primary)]">
+                {latestTelemetry?.status || "OK"}
+              </span>
+            </div>
+            <div className="glass-panel p-4 rounded-xl border border-white/10">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-muted)] block mb-1">Last Packet</span>
+              <span className="text-sm font-mono text-white">
+                {latestTelemetry?.time || latestTelemetry?.timestamp
+                  ? new Date(latestTelemetry.time || latestTelemetry.timestamp || "").toLocaleString()
+                  : "--"}
+              </span>
+            </div>
           </div>
 
           {/* Main Chart */}
