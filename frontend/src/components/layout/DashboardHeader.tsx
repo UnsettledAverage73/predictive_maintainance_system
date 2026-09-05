@@ -1,10 +1,12 @@
 'use client';
 
 import { useEffect, useState } from "react";
-import { Bell, ChevronRight, Search } from "lucide-react";
+import { Bell, ChevronRight, Radio, Search, WifiOff } from "lucide-react";
+import { api } from "@/lib/api";
 
 export function DashboardHeader() {
   const [alertCount, setAlertCount] = useState(0);
+  const [sensorState, setSensorState] = useState<"loading" | "live" | "registered" | "offline">("loading");
 
   useEffect(() => {
     const syncCount = () => {
@@ -22,9 +24,50 @@ export function DashboardHeader() {
     };
   }, []);
 
+  useEffect(() => {
+    let mounted = true;
+
+    const syncSensors = async () => {
+      try {
+        const sensors = (await api.getConnectedSensors(10)) as Array<{ status?: string }>;
+        if (!mounted) {
+          return;
+        }
+        if (Array.isArray(sensors) && sensors.some((sensor: { status?: string }) => sensor.status === "connected")) {
+          setSensorState("live");
+        } else if (Array.isArray(sensors) && sensors.some((sensor: { status?: string }) => sensor.status === "registered")) {
+          setSensorState("registered");
+        } else {
+          setSensorState("registered");
+        }
+      } catch {
+        if (mounted) {
+          setSensorState("offline");
+        }
+      }
+    };
+
+    syncSensors();
+    const interval = window.setInterval(syncSensors, 10000);
+
+    return () => {
+      mounted = false;
+      window.clearInterval(interval);
+    };
+  }, []);
+
   const openPalette = () => {
     window.dispatchEvent(new CustomEvent('command-palette:open'));
   };
+
+  const sensorLabel =
+    sensorState === "live"
+      ? "ESP32 live telemetry"
+      : sensorState === "registered"
+        ? "ESP32 registered"
+        : sensorState === "offline"
+          ? "Backend unreachable"
+          : "Checking sensors...";
 
   return (
     <header className="hidden md:flex h-[78px] shrink-0 items-center gap-4 border-b border-white/8 bg-[rgba(8,12,18,0.78)] px-6 backdrop-blur-xl lg:px-8">
@@ -45,6 +88,14 @@ export function DashboardHeader() {
         </button>
       </div>
       <div className="ml-auto flex items-center gap-3">
+        <div className="hidden lg:flex items-center gap-2 rounded-full border border-white/8 bg-white/4 px-3 py-2 text-xs text-[var(--color-muted)]">
+          {sensorState === "offline" ? (
+            <WifiOff className="h-3.5 w-3.5 text-[var(--color-destructive)]" />
+          ) : (
+            <Radio className={`h-3.5 w-3.5 ${sensorState === "live" ? "text-[var(--color-success)]" : "text-[var(--color-warning)]"}`} />
+          )}
+          <span className="font-medium text-[var(--color-foreground)]">{sensorLabel}</span>
+        </div>
         <button className="hidden lg:flex items-center gap-2 rounded-full border border-white/8 bg-white/4 px-3 py-2 text-xs font-medium text-[var(--color-muted)] hover:border-[var(--color-primary)]/25 hover:text-[var(--color-foreground)]">
           Operations Hub
           <ChevronRight className="h-3.5 w-3.5" />

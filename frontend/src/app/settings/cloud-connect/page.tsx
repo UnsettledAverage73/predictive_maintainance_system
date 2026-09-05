@@ -1,8 +1,9 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { api } from '@/lib/api';
 import { LiveLogPanel } from '@/components/cloud-connect/LiveLogPanel';
-import { Settings2 } from 'lucide-react';
+import { Copy, Settings2, Link2 } from 'lucide-react';
 
 type Provider = 'AWS' | 'GCP' | 'Azure' | 'Local' | null;
 
@@ -12,6 +13,8 @@ export default function CloudConnectWizardPage() {
   const [isConnecting, setIsConnecting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [logs, setLogs] = useState<any[]>([]);
+  const [networkEndpoint, setNetworkEndpoint] = useState<{ http_base_url: string; host: string; local_ip: string; port: number } | null>(null);
+  const [copyState, setCopyState] = useState<'idle' | 'copied'>('idle');
 
   const [awsAccessKey, setAwsAccessKey] = useState('');
   const [awsSecretKey, setAwsSecretKey] = useState('');
@@ -19,6 +22,45 @@ export default function CloudConnectWizardPage() {
   const [awsRegion, setAwsRegion] = useState('us-east-1');
   const [instanceType, setInstanceType] = useState('t3.small');
   const [storageGb, setStorageGb] = useState(30);
+
+  useEffect(() => {
+    let mounted = true;
+    api.getNetworkEndpoint()
+      .then((data) => {
+        if (mounted) {
+          setNetworkEndpoint(data);
+        }
+      })
+      .catch(() => {
+        if (mounted) {
+          setNetworkEndpoint(null);
+        }
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const ingestUrl = useMemo(() => {
+    if (networkEndpoint?.http_base_url) {
+      return `${networkEndpoint.http_base_url}/api/iot/ingest`;
+    }
+    if (typeof window !== 'undefined') {
+      return `http://${window.location.hostname}:8000/api/iot/ingest`;
+    }
+    return 'http://127.0.0.1:8000/api/iot/ingest';
+  }, [networkEndpoint]);
+
+  const handleCopyEndpoint = async () => {
+    try {
+      await navigator.clipboard.writeText(ingestUrl);
+      setCopyState('copied');
+      window.setTimeout(() => setCopyState('idle'), 1500);
+    } catch {
+      setCopyState('idle');
+    }
+  };
   
   const handleNext = () => setStep(prev => Math.min(prev + 1, 3));
   const handleBack = () => setStep(prev => Math.max(prev - 1, 1));
@@ -93,6 +135,36 @@ export default function CloudConnectWizardPage() {
             </div>
             <h1 className="text-3xl font-bold">Connect Private Cloud</h1>
             <p className="text-[var(--color-muted)] mt-2">Securely connect PredictMaint to your organization's infrastructure.</p>
+          </div>
+
+          <div className="mb-8 rounded-2xl border border-[var(--color-border)] bg-[linear-gradient(135deg,rgba(3,7,18,0.92),rgba(8,15,28,0.88))] p-5 shadow-xl">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 text-xs uppercase tracking-[0.24em] text-[var(--color-muted)]">
+                  <Link2 className="h-4 w-4 text-[var(--color-primary)]" />
+                  Live ESP32 Endpoint
+                </div>
+                <h2 className="text-lg font-semibold text-white">Use this URL in the ESP32 HTTP client</h2>
+                <p className="text-sm text-slate-400">The dashboard reads the backend host automatically and exposes the ingest URL for copy/paste.</p>
+              </div>
+              <div className="flex flex-col gap-3 lg:min-w-[420px]">
+                <div className="rounded-xl border border-[var(--color-border)] bg-black/30 px-4 py-3 font-mono text-sm text-[var(--color-primary)] break-all">
+                  {ingestUrl}
+                </div>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={handleCopyEndpoint}
+                    className="inline-flex items-center gap-2 rounded-lg bg-[var(--color-primary)] px-4 py-2.5 text-sm font-semibold text-black transition hover:brightness-110"
+                  >
+                    <Copy className="h-4 w-4" />
+                    {copyState === 'copied' ? 'Copied' : 'Copy URL'}
+                  </button>
+                  <span className="text-xs text-slate-500">
+                    {networkEndpoint ? `LAN IP: ${networkEndpoint.local_ip}` : 'Waiting for backend...'}
+                  </span>
+                </div>
+              </div>
+            </div>
           </div>
 
           <div className="flex items-center justify-between mb-12 relative">

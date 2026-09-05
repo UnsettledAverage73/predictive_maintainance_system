@@ -25,6 +25,16 @@ export const MachineCard = React.memo(function MachineCard({ machine, className 
               <h3 className="truncate text-lg font-semibold">{machine.name}</h3>
             </div>
             <p className="truncate text-sm text-[var(--color-muted)] font-mono">{machine.id} \u2022 {machine.productionLine}</p>
+            {machine.macAddress && (
+              <p className="truncate text-[11px] font-mono text-[var(--color-muted)] mt-1">
+                MAC: {machine.macAddress}
+              </p>
+            )}
+            {machine.sensorKind && (
+              <p className="truncate text-[11px] font-mono text-[var(--color-muted)] mt-1">
+                Sensor: {machine.sensorKind}
+              </p>
+            )}
           </div>
           <RiskBadge score={machine.riskScore} />
         </div>

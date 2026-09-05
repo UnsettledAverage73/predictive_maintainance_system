@@ -60,7 +60,7 @@ def send_whatsapp_alert(
     content_sid = os.getenv("TWILIO_WHATSAPP_CONTENT_SID", "").strip()
     
     # Temporarily disabling template to ensure delivery while debugging variables
-    use_template = False 
+    use_template = True 
     
     variables = {
             "1": equipment_id,

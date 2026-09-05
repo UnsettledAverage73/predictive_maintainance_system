@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, Suspense } from "react";
 import { NLChatBubble } from "@/components/agents/NLChatBubble";
 import { ChatMessage } from "@/types";
 import { Bot, FileText, Send, Sparkles, AlertTriangle, Mic, Image as ImageIcon, StopCircle } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
 
-export default function QueryPage() {
+function QueryPageContent() {
   const searchParams = useSearchParams();
   const initialQ = searchParams.get("q");
   const machineId = searchParams.get("machineId");
@@ -326,5 +326,19 @@ export default function QueryPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function QueryPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex h-[50vh] w-full items-center justify-center">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-[var(--color-primary)] border-t-transparent" />
+        </div>
+      }
+    >
+      <QueryPageContent />
+    </Suspense>
   );
 }

@@ -1,4 +1,5 @@
 import os
+import hashlib
 import sqlite3
 import base64
 import asyncio
@@ -78,6 +79,9 @@ class OnboardRequest(BaseModel):
     brokerUrl: Optional[str] = None
     port: Optional[str] = None
     topic: Optional[str] = None
+    macAddress: Optional[str] = None
+    sensorKind: Optional[str] = "multi"
+    sensors: Optional[List[str]] = None
 
 class ConnectionTestRequest(BaseModel):
     protocol: str
@@ -367,7 +371,8 @@ async def chat_with_agent(req: ChatRequest):
     # 1. Check AI Cache (Phase 4)
     # Using a deterministic hash of the message content
     last_msg = req.messages[-1]["content"] if req.messages else ""
-    cache_key = f"ai_cache:{req.machineId}:{req.sessionId or 'global'}:{hash(last_msg)}"
+    msg_hash = hashlib.sha256(last_msg.encode()).hexdigest()[:16]
+    cache_key = f"ai_cache:{req.machineId}:{req.sessionId or 'global'}:{msg_hash}"
     
     cached_response = None
     try:
@@ -418,10 +423,6 @@ async def upload_manual(machine_id: str = Form(...), file: UploadFile = File(...
         
     return {"status": "success", "message": result}
 
-@app.post("/api/onboard")
-async def onboard_machine(req: OnboardRequest):
-    """Securely onboard new industrial assets."""
-    # ... logic for onboarding ...
 @app.get("/api/schedule")
 async def get_schedule(ai_prioritized: bool = False):
     """Returns the master maintenance schedule, optionally prioritized by AI."""
@@ -797,6 +798,7 @@ async def ingest_iot_telemetry(request: IoTIngestRequest):
     matched_equipment_id = _find_equipment_by_mac(normalized_mac) if normalized_mac else None
     if matched_equipment_id:
         equipment_id = matched_equipment_id
+        payload["equipment_id"] = equipment_id
 
     equipment_meta = get_equipment_metadata(equipment_id)
     if not equipment_meta:
@@ -822,25 +824,40 @@ async def ingest_iot_telemetry(request: IoTIngestRequest):
     temp = _coerce_ingest_float(payload.get("temperature"))
     humidity = _coerce_ingest_float(payload.get("humidity"))
     vib = _coerce_ingest_float(payload.get("vibration"))
-    log_sensor_reading(equipment_id, temp if temp is not None else 0.0, vib if vib is not None else 0.0)
+    log_sensor_reading(equipment_id, temp if temp is not None else 0.0, vib if vib is not None else 0.0, timestamp=timestamp)
 
     telemetry_fields = payload.get("parameters") or {}
     telemetry_fields = {**telemetry_fields}
     for key in ("temperature", "humidity", "vibration", "vibration_rms", "pressure", "rpm", "current_draw", "status", "telemetry_status"):
-        if key in payload:
+        if key in payload and key not in telemetry_fields:
             telemetry_fields[key] = payload[key]
 
-    for key, value in telemetry_fields.items():
+    for key, value in list(telemetry_fields.items()):
         numeric_value = _coerce_ingest_float(value)
         if numeric_value is not None:
-            log_telemetry_point(equipment_id, key, numeric_value)
+            log_telemetry_point(equipment_id, key, numeric_value, timestamp=timestamp)
+            telemetry_fields[key] = numeric_value
         else:
-            log_telemetry_point(equipment_id, key, None, str(value))
+            log_telemetry_point(equipment_id, key, None, str(value), timestamp=timestamp)
+            telemetry_fields[key] = str(value)
+
+    payload["parameters"] = telemetry_fields
+    payload["timestamp"] = timestamp
 
     try:
         await r.publish(REDIS_CHANNEL, json.dumps(payload))
     except Exception as exc:
         print(f"Redis Publish Error: {exc}")
+
+    command_action = None
+    if os.path.exists(COMMAND_FILE):
+        try:
+            with open(COMMAND_FILE, "r") as f:
+                cmd = json.load(f)
+            if cmd.get("equipment_id") == equipment_id:
+                command_action = cmd.get("action")
+        except Exception:
+            pass
 
     return {
         "status": "success",
@@ -848,6 +865,7 @@ async def ingest_iot_telemetry(request: IoTIngestRequest):
         "timestamp": timestamp,
         "stored": True,
         "fields_logged": len(telemetry_fields),
+        "command": command_action,
     }
 
 @app.post("/api/equipment/{equipment_id}/pair-esp32")
@@ -881,18 +899,68 @@ async def pair_esp32_device(equipment_id: str, request: PairEsp32Request):
         "message": f"ESP32 {normalized_mac} paired to {equipment_id}"
     }
 
+@app.post("/api/onboard")
 @app.post("/api/equipment")
 async def onboard_machine(request: OnboardRequest):
     from src.data.database import add_equipment, seed_common_parameters, add_parameter
-    success = add_equipment(eq_id=request.id, name=request.name, line=request.productionLine, protocol=request.protocol)
+    normalized_mac = _normalize_mac_address(request.macAddress) if request.macAddress else None
+    success = add_equipment(
+        eq_id=request.id,
+        name=request.name,
+        line=request.productionLine,
+        protocol=request.protocol,
+        machine_class=request.machineType or 'Generic Industrial',
+        mac_address=normalized_mac,
+        sensor_kind=_normalize_sensor_kind(request.sensorKind) or "multi"
+    )
     if not success:
         raise HTTPException(status_code=500, detail="Ledger Write Failed")
-    seed_common_parameters(request.id)
-    templates = agent.get_parameter_templates()
-    if request.machineType in templates:
-        for p in templates[request.machineType]:
-            add_parameter(request.id, key=p['parameterKey'], name=p['displayName'], unit=p['unit'], normal_min=p['normalMin'], normal_max=p['normalMax'], warning_threshold=p['warningThreshold'], critical_threshold=p['criticalThreshold'], direction=p['direction'])
-    return {"status": "Agent Spawned", "id": request.id}
+
+    # If the user selected specific physical sensors, seed ONLY those sensors!
+    if request.sensors and len(request.sensors) > 0:
+        SENSOR_SPECS = {
+            "temperature": ("Motor Temperature", "°C", 20.0, 65.0, 75.0, 85.0, "above"),
+            "humidity": ("Ambient Humidity", "%", 30.0, 70.0, 80.0, 90.0, "above"),
+            "current_draw": ("Current Draw (ACS712)", "A", 0.5, 12.0, 16.0, 22.0, "above"),
+            "rpm": ("Rotational Speed (Hall RPM)", "RPM", 1000.0, 2800.0, 3200.0, 3500.0, "above"),
+            "hall_analog": ("Hall Magnetic Flux", "raw", 1000.0, 3000.0, 3500.0, 4000.0, "above"),
+            "button_state": ("Operator Button", "state", 0.0, 0.0, 1.0, 1.0, "above"),
+            "buzzer_state": ("Alarm Buzzer", "state", 0.0, 0.0, 1.0, 1.0, "above"),
+            "vibration_rms": ("Vibration RMS", "mm/s", 0.0, 2.5, 4.5, 6.0, "above"),
+            "pressure": ("Fluid Pressure", "bar", 1.0, 10.0, 12.0, 15.0, "above"),
+        }
+        for s_key in request.sensors:
+            if s_key in SENSOR_SPECS:
+                name, unit, n_min, n_max, w_th, c_th, direction = SENSOR_SPECS[s_key]
+                add_parameter(
+                    request.id, key=s_key, name=name, unit=unit,
+                    normal_min=n_min, normal_max=n_max,
+                    warning_threshold=w_th, critical_threshold=c_th,
+                    direction=direction, category="hardware"
+                )
+    else:
+        seed_common_parameters(request.id)
+        templates = agent.get_parameter_templates()
+        if request.machineType in templates:
+            for p in templates[request.machineType]:
+                add_parameter(request.id, key=p['parameterKey'], name=p['displayName'], unit=p['unit'], normal_min=p['normalMin'], normal_max=p['normalMax'], warning_threshold=p['warningThreshold'], critical_threshold=p['criticalThreshold'], direction=p['direction'])
+
+    return {"status": "Agent Spawned", "id": request.id, "mac_address": normalized_mac}
+
+@app.get("/api/iot/detect-devices")
+async def detect_iot_devices():
+    import glob
+    ports = glob.glob("/dev/ttyUSB*") + glob.glob("/dev/ttyACM*")
+    devices = []
+    for p in ports:
+        devices.append({
+            "port": p,
+            "connected": True,
+            "type": "ESP32 / Serial Microcontroller",
+            "recommended_baud": 115200,
+            "known_mac": "3c:71:bf:52:d7:c8" if p == "/dev/ttyUSB0" else None
+        })
+    return {"count": len(devices), "devices": devices}
 
 @app.get("/api/equipment")
 async def get_all_equipment():
@@ -962,8 +1030,10 @@ async def get_machine_telemetry(equipment_id: str, minutes: int = 60):
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         
+        cutoff_iso = (datetime.now() - timedelta(minutes=int(minutes))).isoformat()
+
         # 1. Fetch from the legacy sensor_readings for backwards compatibility
-        cursor.execute("SELECT timestamp as time, temperature, vibration FROM sensor_readings WHERE equipment_id = ? AND timestamp > datetime('now', '-' || ? || ' minutes') ORDER BY timestamp ASC", (equipment_id, minutes))
+        cursor.execute("SELECT timestamp as time, temperature, vibration FROM sensor_readings WHERE equipment_id = ? AND timestamp >= ? ORDER BY timestamp ASC", (equipment_id, cutoff_iso))
         legacy_rows = [dict(row) for row in cursor.fetchall()]
         
         # 2. Fetch from the dynamic telemetry_readings table for new parameters
@@ -971,32 +1041,51 @@ async def get_machine_telemetry(equipment_id: str, minutes: int = 60):
             SELECT timestamp as time, parameter_key, value
             FROM telemetry_readings
             WHERE machine_id = ?
-              AND timestamp > datetime('now', '-' || ? || ' minutes')
+              AND timestamp >= ?
             ORDER BY timestamp ASC
-        """, (equipment_id, minutes))
-        dynamic_rows = cursor.fetchall()
+        """, (equipment_id, cutoff_iso))
+        dynamic_rows = [dict(row) for row in cursor.fetchall()]
 
-        # 2.1 Fetch Alerts for the same window to tag anomalies
+        # 2.1 Fallback: if no recent data in the window, fetch the latest historical points so charts are not blank
+        if not dynamic_rows and not legacy_rows:
+            cursor.execute("""
+                SELECT timestamp as time, parameter_key, value
+                FROM telemetry_readings
+                WHERE machine_id = ?
+                ORDER BY timestamp DESC LIMIT 350
+            """, (equipment_id,))
+            dynamic_rows = [dict(row) for row in cursor.fetchall()][::-1]
+
+            cursor.execute("""
+                SELECT timestamp as time, temperature, vibration
+                FROM sensor_readings
+                WHERE equipment_id = ?
+                ORDER BY timestamp DESC LIMIT 50
+            """, (equipment_id,))
+            legacy_rows = [dict(row) for row in cursor.fetchall()][::-1]
+
+        # 2.2 Fetch Alerts for the same window to tag anomalies
         cursor.execute("""
             SELECT id, timestamp as time, severity, reason 
             FROM ai_alerts 
             WHERE equipment_id = ? 
-              AND timestamp > datetime('now', '-' || ? || ' minutes')
-        """, (equipment_id, minutes))
+            ORDER BY timestamp DESC LIMIT 50
+        """, (equipment_id,))
         alert_rows = [dict(row) for row in cursor.fetchall()]
         
-        # 3. Pivot dynamic rows by timestamp
+        # 3. Pivot dynamic rows by second-bucketed timestamp
         pivoted_data = {}
         for row in dynamic_rows:
-            t = row['time']
-            if t not in pivoted_data: pivoted_data[t] = {"time": t}
+            raw_t = str(row['time'])
+            t = raw_t.split('.')[0] if '.' in raw_t else raw_t
+            if t not in pivoted_data:
+                pivoted_data[t] = {"time": t, "timestamp": t}
             pivoted_data[t][row['parameter_key']] = row['value']
             
         # 4. Merge alerts into the closest telemetry point
-        # This allows the frontend to highlight specific anomalies on the chart
         for alert in alert_rows:
-            # Find closest timestamp in merged_data (rough approximation for simulation)
-            a_ts = alert['time']
+            raw_a_ts = str(alert['time'])
+            a_ts = raw_a_ts.split('.')[0] if '.' in raw_a_ts else raw_a_ts
             if a_ts in pivoted_data:
                 pivoted_data[a_ts]["isAnomaly"] = True
                 pivoted_data[a_ts]["alertSeverity"] = alert['severity']
@@ -1004,14 +1093,19 @@ async def get_machine_telemetry(equipment_id: str, minutes: int = 60):
                 pivoted_data[a_ts]["alertId"] = alert['id']
 
         # 5. Merge legacy and dynamic
-        merged_data = {row['time']: row for row in legacy_rows}
+        merged_data = {}
+        for row in legacy_rows:
+            raw_t = str(row['time'])
+            t = raw_t.split('.')[0] if '.' in raw_t else raw_t
+            merged_data[t] = {"time": t, "timestamp": t, **row}
+
         for t, data in pivoted_data.items():
             if t in merged_data:
                 merged_data[t].update(data)
             else:
                 merged_data[t] = data
                 
-        results = sorted(merged_data.values(), key=lambda x: x['time'])
+        results = sorted(list(merged_data.values()), key=lambda x: x.get('time', ''))
         conn.close()
         return results
     except Exception as e:
@@ -1032,14 +1126,18 @@ async def telemetry_websocket(websocket: WebSocket, equipment_id: str):
                 data = json.loads(message["data"])
                 # Only send if it matches the equipment_id requested
                 if data.get("equipment_id") == equipment_id:
+                    ts = data.get("timestamp") or datetime.now().isoformat()
                     # Send time and spread all parameters
                     payload = {
-                        "time": data.get("timestamp", time.time()),
+                        "time": ts,
+                        "timestamp": ts,
                         **data.get("parameters", {})
                     }
-                    # For legacy support, also include temperature/vibration at root if they are in parameters
-                    if "temperature" in payload: payload["temperature"] = payload["temperature"]
-                    if "vibration" in payload: payload["vibration"] = payload["vibration"]
+                    # For legacy support, also include temperature/vibration at root if present
+                    if "temperature" not in payload and "temperature" in data:
+                        payload["temperature"] = data["temperature"]
+                    if "vibration" not in payload and "vibration" in data:
+                        payload["vibration"] = data["vibration"]
                     
                     await websocket.send_json(payload)
     except WebSocketDisconnect:
@@ -1272,16 +1370,21 @@ async def confirm_csv_import(
     
     rows_imported = 0
     for _, row in df.iterrows():
+        row_ts = None
+        if timestamp_column and timestamp_column in row and pd.notna(row[timestamp_column]):
+            row_ts = str(row[timestamp_column])
         for mapping in confirmed_mappings:
             csv_col = mapping["csv_col"]
             param_key = mapping["parameter_key"]
-            if param_key and csv_col in row:
+            if param_key and csv_col in row and pd.notna(row[csv_col]):
                 val = row[csv_col]
-                # Log to the new dynamic telemetry table
+                # Log to the new dynamic telemetry table with historical timestamp
                 try:
-                    log_telemetry_point(machine_id, param_key, float(val) if not isinstance(val, str) else None, str(val) if isinstance(val, str) else None)
+                    num_val = float(val) if not isinstance(val, str) else None
+                    str_val = str(val) if isinstance(val, str) else None
+                    log_telemetry_point(machine_id, param_key, num_val, str_val, timestamp=row_ts)
                 except:
-                    log_telemetry_point(machine_id, param_key, None, str(val))
+                    log_telemetry_point(machine_id, param_key, None, str(val), timestamp=row_ts)
         rows_imported += 1
         
     return {"status": "success", "rows_imported": rows_imported}

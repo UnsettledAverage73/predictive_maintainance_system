@@ -115,7 +115,16 @@ def calculate_failure_probability(readings):
     if len(readings) < 5:
         return 0, None
 
-    temps = [r.get('temperature', 0) for r in readings if 'temperature' in r]
+    # Ensure readings are chronologically ordered (oldest to newest)
+    if any('timestamp' in r for r in readings):
+        try:
+            sorted_readings = sorted(readings, key=lambda x: str(x.get('timestamp', '')))
+            temps = [r.get('temperature', 0) for r in sorted_readings if 'temperature' in r]
+        except Exception:
+            temps = [r.get('temperature', 0) for r in readings if 'temperature' in r]
+    else:
+        temps = [r.get('temperature', 0) for r in readings if 'temperature' in r]
+
     if not temps:
         return 0, None
         

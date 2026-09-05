@@ -1,11 +1,12 @@
 import { MaintenanceTask } from "@/types";
 import { cn } from "@/lib/utils";
+import { api } from "@/lib/api";
 import { CheckCircle, Play, Clock, HardDrive, Bot, AlertTriangle } from "lucide-react";
 
 interface TaskCardProps {
   task: MaintenanceTask;
   className?: string;
-  onUpdate?: (id: number, status: MaintenanceTask['status']) => void;
+  onUpdate?: (id: string | number, status: MaintenanceTask['status']) => void;
 }
 
 export function TaskCard({ task, className, onUpdate }: TaskCardProps) {
@@ -52,13 +53,9 @@ export function TaskCard({ task, className, onUpdate }: TaskCardProps) {
 
   const triggerAnomaly = async (param: 'temperature' | 'vibration_rms') => {
     try {
-      await fetch(`/api/equipment/${task.machine_id}/trigger_anomaly`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          parameter: param, 
-          value: param === 'temperature' ? 128.5 : 8.4 
-        })
+      await api.triggerAnomaly(task.machine_id, {
+        parameter: param,
+        value: param === 'temperature' ? 128.5 : 8.4
       });
     } catch (err) {
       console.error("Demo trigger failed", err);
@@ -105,7 +102,6 @@ export function TaskCard({ task, className, onUpdate }: TaskCardProps) {
           </h4>
         </div>
 
-        {/* Risk Score Circle */}
         <div className="flex flex-col items-center gap-1 shrink-0 ml-2">
            <div className="relative w-11 h-11 flex items-center justify-center">
               <svg className="w-11 h-11 transform -rotate-90">
@@ -149,7 +145,6 @@ export function TaskCard({ task, className, onUpdate }: TaskCardProps) {
         </div>
       )}
 
-      {/* Important Points Section - ISO 14224 Precise Output Alignment */}
       <div className={cn(
         "p-3.5 bg-gradient-to-br rounded-xl border flex flex-col gap-3 relative overflow-hidden group/ai shadow-inner transition-all duration-500",
         (vibBreach || tempBreach) 
@@ -206,7 +201,9 @@ export function TaskCard({ task, className, onUpdate }: TaskCardProps) {
               "font-black uppercase text-[9px] tracking-widest not-italic block mb-0.5",
               (vibBreach || tempBreach) ? "text-red-400" : "text-[var(--color-primary)]"
             )}>LLM Recommendation</span>
-            &quot;{(vibBreach || tempBreach) ? `CRITICAL: ${task.failureMode} detected. Shutdown protocol recommended immediately.` : (task.aiReason || recommendedAction || 'Proceed with standard inspection protocol.')}&quot;
+            {(vibBreach || tempBreach) 
+              ? `"CRITICAL: ${task.failureMode} detected. Shutdown protocol recommended immediately."` 
+              : `"${task.aiReason || recommendedAction || 'Proceed with standard inspection protocol.'}"`}
           </li>
         </ul>
       </div>
@@ -221,7 +218,9 @@ export function TaskCard({ task, className, onUpdate }: TaskCardProps) {
         <div className="flex gap-4 items-center">
           <div className="flex items-center gap-1.5 text-[var(--color-muted)] group-hover:text-slate-300 transition-colors">
             <Clock className="w-3.5 h-3.5" />
-            <span className="text-[10px] font-bold font-mono tracking-tight uppercase">{new Date(dueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+            <span className="text-[10px] font-bold font-mono tracking-tight uppercase">
+              {dueDate ? new Date(dueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'Pending'}
+            </span>
           </div>
           <button 
             onClick={(e) => { e.stopPropagation(); triggerAnomaly('temperature'); }}

@@ -53,17 +53,26 @@ export default function SchedulePage() {
     const ws = new WebSocket(wsUrl);
 
     ws.onmessage = (event) => {
-      const updatedTask = normalizeTask(JSON.parse(event.data));
-      setTasks(prev => {
-        const exists = prev.find(t => t.id === updatedTask.id);
-        if (exists) {
-          return prev.map(t => t.id === updatedTask.id ? updatedTask : t);
-        } else {
-          return [...prev, updatedTask].sort((a, b) => 
-            new Date(a.due_date).getTime() - new Date(b.due_date).getTime()
-          );
+      try {
+        const raw = JSON.parse(event.data);
+        if (raw.error || (!raw.id && !raw.task_name && !raw.title)) {
+          console.warn("Schedule WS status notification:", raw);
+          return;
         }
-      });
+        const updatedTask = normalizeTask(raw);
+        setTasks(prev => {
+          const exists = prev.find(t => t.id === updatedTask.id);
+          if (exists) {
+            return prev.map(t => t.id === updatedTask.id ? updatedTask : t);
+          } else {
+            return [...prev, updatedTask].sort((a, b) => 
+              new Date(a.due_date).getTime() - new Date(b.due_date).getTime()
+            );
+          }
+        });
+      } catch (err) {
+        console.error("Failed to parse schedule WS message:", err);
+      }
     };
 
     return () => ws.close();

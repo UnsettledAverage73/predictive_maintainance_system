@@ -103,14 +103,14 @@ export function TelemetryChart({ data: initialData, machineId, parameters, class
             <YAxis stroke="#8B949E" fontSize={11} />
             <Tooltip 
               contentStyle={{ backgroundColor: '#0D1117', borderColor: '#30363D', color: '#E6EDF3', borderRadius: '8px' }}
-              labelFormatter={(label) => new Date(label).toLocaleString()}
+              labelFormatter={(label) => label ? new Date(label).toLocaleString() : ""}
               content={({ active, payload, label }) => {
                 if (active && payload && payload.length) {
                   const dataPoint = payload[0].payload;
                   return (
                     <div className="bg-[#0D1117] border border-[#30363D] p-3 rounded-lg shadow-xl min-w-[200px]">
                       <p className="text-[10px] text-[var(--color-muted)] mb-1 font-mono uppercase font-bold tracking-widest">
-                        {new Date(label).toLocaleString()}
+                        {label ? new Date(label).toLocaleString() : ""}
                       </p>
 
                       {dataPoint.isAnomaly && (

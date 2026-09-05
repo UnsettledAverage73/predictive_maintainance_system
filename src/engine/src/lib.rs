@@ -18,7 +18,7 @@ impl SegmentTree {
     }
 
     fn query_max(&self, mut l: usize, mut r: usize) -> f64 {
-        if self.n == 0 { return 0.0; }
+        if self.n == 0 || l >= r || r > self.n { return 0.0; }
         let mut res = f64::MIN;
         l += self.n; r += self.n;
         while l < r {
@@ -26,7 +26,7 @@ impl SegmentTree {
             if r % 2 == 1 { r -= 1; res = res.max(self.tree[r]); }
             l /= 2; r /= 2;
         }
-        res
+        if res == f64::MIN { 0.0 } else { res }
     }
 }
 

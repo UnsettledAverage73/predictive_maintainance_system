@@ -5,7 +5,7 @@ import sys
 from unittest.mock import MagicMock, patch
 
 # Add src to python path
-sys.path.append(os.path.join(os.path.dirname(__file__), '../'))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 
 from src.agent.maintenance_agent import MaintenanceAgent
 
@@ -13,7 +13,7 @@ class TestMaintenanceAgent(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        cls.test_data_path = os.path.join(base_dir, "test_data.json")
+        cls.test_data_path = os.path.join(base_dir, "test_data_tmp.json")
         cls.test_data = {
             "maintenance_logs": [
                 {"equipment_id": "CNC001", "equipment_name": "Test CNC", "timestamp": "2023-01-01T00:00:00", "notes": "Fixed"}
@@ -23,6 +23,11 @@ class TestMaintenanceAgent(unittest.TestCase):
         }
         with open(cls.test_data_path, "w") as f:
             json.dump(cls.test_data, f)
+
+    @classmethod
+    def tearDownClass(cls):
+        if hasattr(cls, 'test_data_path') and os.path.exists(cls.test_data_path):
+            os.remove(cls.test_data_path)
 
     def test_load_data_integrity(self):
         """Protocol: Check if data is loaded into memory."""

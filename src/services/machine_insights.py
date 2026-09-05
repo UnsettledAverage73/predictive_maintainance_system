@@ -206,18 +206,34 @@ def _build_cost_analysis(machine_id: str, threat_detection: Dict[str, Any]) -> D
     financials = get_machine_financials(machine_id) or {}
     primary_part = _select_primary_part(machine_id, threat_detection["threat"])
 
-    planned_labor = _safe_float(financials.get("planned_labor_cost_inr"), 12000)
-    planned_part_cost = _safe_float(primary_part.get("planned_cost_inr"), 10000)
-    emergency_multiplier = _safe_float(financials.get("emergency_labor_multiplier"), 3.0)
-    downtime_per_hour = _safe_float(financials.get("downtime_cost_per_hour_inr"), 50000)
-    emergency_part_cost = _safe_float(primary_part.get("emergency_cost_inr"), planned_part_cost * 1.4)
-    emergency_shipping = round(emergency_part_cost * 0.12, 2)
-    downtime_hours = 1.5 if threat_detection["confidence"] < 70 else 3.5
+    # New Cost Logic Inputs
+    std_rate = _safe_float(financials.get("standard_labor_rate"), 500.0)
+    num_labor = int(financials.get("num_laborers", 2))
+    emergency_multiplier = _safe_float(financials.get("emergency_labor_multiplier"), 1.5) # Overtime Rate factor (750/500 = 1.5)
+    downtime_per_hour = _safe_float(financials.get("downtime_cost_per_hour_inr"), 5000.0)
+    
+    planned_part_cost = _safe_float(primary_part.get("planned_cost_inr"), 1000.0)
+    expedited_parts = _safe_float(primary_part.get("emergency_cost_inr"), planned_part_cost * 1.4)
+    shipping = 500.0
+    
+    # 1. Planned Cost Calculation
+    # Formula: (Scheduled Hours × Standard labour Rate × Number of labour) + planned part cost + Scheduled downtime loss
+    scheduled_hours = 4.0
+    scheduled_downtime_loss = 0.0 # Standard assumption for planned
+    planned_labor_cost = scheduled_hours * std_rate * num_labor
+    planned_cost = round(planned_labor_cost + planned_part_cost + scheduled_downtime_loss, 2)
 
-    planned_cost = round(planned_labor + planned_part_cost, 2)
-    reactive_repair_cost = round((planned_labor * emergency_multiplier) + emergency_part_cost, 2)
-    downtime_cost = round(downtime_per_hour * downtime_hours, 2)
-    reactive_cost = round(reactive_repair_cost + downtime_cost + emergency_shipping, 2)
+    # 2. Unplanned Maintenance Cost Calculation
+    # Formula: (Emergency hours × Overtime Rate × Number of labour) + Expedited Parts + Unplanned downtime Loss
+    # Note: Overtime Rate = std_rate * emergency_multiplier
+    emergency_hours = 4.0
+    num_emergency_labor = num_labor * 2 # Usually more labor for emergency (example used 4 vs 2)
+    overtime_rate = std_rate * emergency_multiplier
+    
+    unplanned_downtime_loss = emergency_hours * downtime_per_hour
+    unplanned_labor_cost = emergency_hours * overtime_rate * num_emergency_labor
+    reactive_cost = round(unplanned_labor_cost + expedited_parts + shipping + unplanned_downtime_loss, 2)
+
     savings_inr = round(max(0, reactive_cost - planned_cost), 2)
     savings_pct = round((savings_inr / reactive_cost) * 100, 1) if reactive_cost else 0
 
@@ -225,15 +241,15 @@ def _build_cost_analysis(machine_id: str, threat_detection: Dict[str, Any]) -> D
         "primaryPart": primary_part.get("part_name", "General service kit"),
         "plannedCostInr": planned_cost,
         "reactiveCostInr": reactive_cost,
-        "downtimeCostInr": downtime_cost,
+        "downtimeCostInr": unplanned_downtime_loss,
         "estimatedSavingsInr": savings_inr,
         "estimatedSavingsPct": savings_pct,
         "roiLabel": "High ROI" if savings_pct >= 60 else ("Moderate ROI" if savings_pct >= 35 else "Baseline ROI"),
         "plannedVsReactiveRatio": round((reactive_cost / planned_cost), 2) if planned_cost else 0,
         "assumptions": [
-            f"Downtime modeled at Rs {int(downtime_per_hour):,} per hour",
-            f"Emergency labor multiplier {emergency_multiplier:.1f}x",
-            f"Primary replacement part: {primary_part.get('part_name', 'service kit')}",
+            f"Planned: {int(scheduled_hours)}h @ Rs {int(std_rate)}/h x {num_labor} staff",
+            f"Emergency: {int(emergency_hours)}h @ Rs {int(overtime_rate)}/h x {num_emergency_labor} staff",
+            f"Downtime loss modeled at Rs {int(downtime_per_hour):,} per hour",
         ],
     }
 

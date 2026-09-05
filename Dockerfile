@@ -30,6 +30,7 @@ RUN apt-get update && apt-get install -y redis-server libssl3 && rm -rf /var/lib
 
 # Copy from builder
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --from=builder /app /app
 
 # Ensure data directory exists for persistent disk mount
@@ -39,4 +40,4 @@ ENV PORT=8000
 EXPOSE 8000
 
 # Start script to run Redis and the API
-CMD redis-server --daemonize yes && uvicorn src.api:app --host 0.0.0.0 --port $PORT
+CMD redis-server --daemonize yes && python -m uvicorn src.api:app --host 0.0.0.0 --port $PORT

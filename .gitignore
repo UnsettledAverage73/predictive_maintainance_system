@@ -10,13 +10,22 @@ __pycache__/
 
 # Local Logs & Data
 *.log
+archive/
 data/*.db
 data/*.json.tmp
 data/iot_stream.json
 demo_data/
-run_demo.py
 simulator.log
+
+# Testing Temporary Data
+tests/unit/test_data_tmp.json
 
 # IDEs
 .vscode/
 .idea/
+
+# Rust & Node Build Artifacts
+**/target/
+**/node_modules/
+**/.next/
+*.rdb

@@ -82,9 +82,8 @@ export async function generatePDF(elementId: string, fileName: string) {
       format: [canvas.width / 2, canvas.height / 2], // Keep original aspect ratio but at manageable scale
     });
 
-    const imgProps = pdf.getImageProperties(imgData);
     const pdfWidth = pdf.internal.pageSize.getWidth();
-    const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+    const pdfHeight = canvas.width > 0 ? (canvas.height * pdfWidth) / canvas.width : pdf.internal.pageSize.getHeight();
 
     pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
     pdf.save(`${fileName}.pdf`);

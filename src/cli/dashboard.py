@@ -29,7 +29,7 @@ def logout():
         st.rerun()
 
 # --- DASHBOARD CORE ---
-DB_PATH = "data/factory_ops.db"
+from src.data.database import DB_PATH
 
 st.set_page_config(page_title="Sovereign Predictive Maintenance", layout="wide")
 

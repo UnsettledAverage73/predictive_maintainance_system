@@ -58,21 +58,16 @@ services:
   api:
     build:
       context: .
-      dockerfile: backend/docker/api.Dockerfile
+      dockerfile: Dockerfile
     ports:
       - "8000:8000"
     volumes:
-      - ./backend/app:/app/app
+      - ./data:/app/data
     environment:
-      - DATABASE_URL=postgresql+asyncpg://predictmaint:predictmaint_pass@postgres:5432/predictmaint
       - REDIS_URL=redis://redis:6379/0
-      - INFLUXDB_URL=http://influxdb:8086
-      - INFLUXDB_TOKEN=my-super-secret-auth-token
       - OLLAMA_BASE_URL=http://ollama:11434
     depends_on:
-      - postgres
       - redis
-      - influxdb
     networks:
       - predictmaint-net
 

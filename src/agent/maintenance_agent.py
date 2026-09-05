@@ -10,9 +10,12 @@ except ImportError:
     Groq = None
 
 try:
-    from openai import OpenAI
+    from mistralai.client import Mistral
 except ImportError:
-    OpenAI = None
+    try:
+        from mistralai import Mistral
+    except ImportError:
+        Mistral = None
 
 try:
     from sarvamai import SarvamAI
@@ -51,13 +54,13 @@ class MaintenanceAgent:
         self.local_model = "qwen2.5:0.5b"
         self.embed_model = "nomic-embed-text:latest"
         
-        # Cloud Fallback 1: OpenAI (Primary for precision)
-        self.openai_key = os.getenv("OPENAI_API_KEY")
-        if self.openai_key and OpenAI:
-            self.openai_client = OpenAI(api_key=self.openai_key)
-            self.openai_model = 'gpt-4o-mini' # Optimized for industrial data
+        # Cloud Fallback 1: Mistral AI (Primary for precision)
+        self.mistral_key = os.getenv("MISTRAL_API_KEY")
+        if self.mistral_key and Mistral:
+            self.mistral_client = Mistral(api_key=self.mistral_key)
+            self.mistral_model = 'mistral-small-latest' # Optimized for industrial data
         else:
-            self.openai_client = None
+            self.mistral_client = None
 
         # Cloud Fallback 2: Groq (Llama 3.1 8B for efficiency)
         self.groq_key = os.getenv("GROQ_API_KEY")
@@ -182,7 +185,7 @@ class MaintenanceAgent:
         def fetch_sql_context():
             from src.data import database
             import sqlite3
-            conn = sqlite3.connect("data/factory_ops.db")
+            conn = sqlite3.connect(database.DB_PATH)
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             
@@ -236,11 +239,14 @@ class MaintenanceAgent:
             return m_meta, p_context, alerts, history_context, visual_context_memory, telemetry_context
 
         # Parallel Execution: SQL + Pinecone
-        sql_task = loop.run_in_executor(executor, fetch_sql_context)
-        vector_task = loop.run_in_executor(executor, self.query_similar_issues, query, machine_id, 5) # Increased top_k
+        try:
+            sql_task = loop.run_in_executor(executor, fetch_sql_context)
+            vector_task = loop.run_in_executor(executor, self.query_similar_issues, query, machine_id, 5) # Increased top_k
 
-        m_meta, p_context, sql_alerts, history_context, visual_context_memory, telemetry_context = await sql_task
-        vector_context = await vector_task
+            m_meta, p_context, sql_alerts, history_context, visual_context_memory, telemetry_context = await sql_task
+            vector_context = await vector_task
+        finally:
+            executor.shutdown(wait=False)
 
         # 4. Construct Optimized Prompt
         system_prompt = f"""
@@ -358,12 +364,13 @@ class MaintenanceAgent:
         """
         
         prescription = self.analyze_patterns() # Fallback to pattern analysis
-        if self.sarvam_key:
+        if self.sarvam_key or self.sarvam_client:
             prescription = self._get_sarvam_inference("You are a multimodal diagnostic expert.", prompt)
             
         return {
             "equipment_id": eq_id,
             "visual_context": visual_context,
+            "raw_ocr": visual_context,
             "prescription": prescription,
             "telemetry": telemetry_data
         }
@@ -428,8 +435,9 @@ class MaintenanceAgent:
         # 2. Vector Search (Cross-Asset Intelligence)
         results = self.index.query(vector=embedding, top_k=top_k, include_metadata=True)
         output = ""
-        for res in results.matches:
-            m = res.metadata
+        matches = results.get("matches", []) if isinstance(results, dict) else getattr(results, "matches", [])
+        for res in matches:
+            m = res.get("metadata", {}) if isinstance(res, dict) else getattr(res, "metadata", {})
             output += f"[Case Study: {m.get('equipment_name') or 'Similar Asset'}] {m.get('notes') or m.get('note')} | "
         return output
     def analyze_patterns(self) -> str:
@@ -448,7 +456,7 @@ class MaintenanceAgent:
         user_content = f"Recent Observations: {json.dumps(recent_notes)}"
 
         # 3. Route 2 (Brain): Detailed Reasoning
-        print(f"--- [BRAIN] Node (OpenAI) Reasoning ---")
+        print(f"--- [BRAIN] Node (Mistral) Reasoning ---")
         return self._call_brain_node(system_prompt, user_content, max_tokens=350)
 
     def speech_to_text(
@@ -628,14 +636,14 @@ class MaintenanceAgent:
             return self._call_vault_node(system_prompt, user_content)
 
     def _call_brain_node(self, system_prompt: str, user_content: str, max_tokens: int = 700) -> str:
-        """Route 2: Complex Diagnostics & Scheduling (OpenAI/GPT-4o-mini)"""
-        if not self.openai_client:
+        """Route 2: Complex Diagnostics & Scheduling (Mistral/mistral-small-latest)"""
+        if not self.mistral_client:
             return self._call_worker_node(system_prompt, user_content) # Fallback to Groq
         
         try:
-            response = self.openai_client.chat.completions.create(
+            response = self.mistral_client.chat.complete(
                 messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_content}],
-                model=self.openai_model,
+                model=self.mistral_model,
                 max_tokens=max_tokens,
                 temperature=0.1
             )
@@ -661,7 +669,7 @@ class MaintenanceAgent:
             return f"Vault Error: Local engine offline. {str(e)}"
 
     def _get_cloud_inference(self, system_prompt, user_content, max_tokens: int = 250) -> str:
-        """Unified fallback for general queries, defaulting to Brain (OpenAI)."""
+        """Unified fallback for general queries, defaulting to Brain (Mistral)."""
         return self._call_brain_node(system_prompt, user_content, max_tokens=max_tokens)
 
     def _load_data(self) -> Dict[str, Any]:
@@ -700,3 +708,36 @@ class MaintenanceAgent:
             }])
             return "Knowledge absorbed into Sovereign Memory."
         return "Embedding failed."
+
+    def summarize_all_equipment(self) -> str:
+        """Summarizes equipment status across all registered assets for CLI dashboard."""
+        from src.data import database
+        equipment = database.get_all_equipment_metadata()
+        if not equipment:
+            return "No equipment registered in the factory ledger."
+        lines = ["=== Factory Equipment Operational Status ==="]
+        for eq in equipment:
+            health = database.get_machine_health_summary(eq["id"])
+            latest_alert = health["alerts"][0]["reason"] if health.get("alerts") else "No active alerts"
+            temp = f"{health['telemetry'][0]['temperature']}°C" if health.get("telemetry") else "N/A"
+            lines.append(f"• [{eq['id']}] {eq['name']} (Line: {eq['line']}, Protocol: {eq['protocol']}) - Temp: {temp} | Alert: {latest_alert}")
+        return "\n".join(lines)
+
+    def get_equipment_history(self, eq_id: str) -> Dict[str, Any]:
+        """Retrieves exact maintenance logs and textual notes for a specific machine."""
+        from src.data import database
+        raw_logs = database.get_machine_history(eq_id) or []
+        notes = database.get_machine_textual_history(eq_id) or []
+        formatted_logs = [
+            {
+                "timestamp": l.get("timestamp", ""),
+                "activity_type": l.get("action_taken", "Maintenance"),
+                "notes": l.get("parts_replaced", "General service")
+            }
+            for l in raw_logs
+        ]
+        return {
+            "logs": formatted_logs,
+            "notes": notes,
+            "incidents": []
+        }

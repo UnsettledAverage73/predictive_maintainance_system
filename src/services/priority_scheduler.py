@@ -1,25 +1,51 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from src.data.analytics import (
-    calculate_failure_probability,
-    calculate_historical_failure_factor,
-    calculate_log_risk_score,
-)
-from src.data.database import (
-    get_all_equipment_metadata,
-    get_all_pending_tasks,
-    get_asset_priority_profile,
-    get_available_technicians,
-    get_available_tools,
-    get_equipment_metadata,
-    get_inventory_spares,
-    get_machine_health_summary,
-    get_machine_textual_history,
-    get_production_windows,
-    get_safety_risk_profile,
-)
+import src.data.analytics as analytics
+import src.data.database as database
 from src.services.machine_insights import get_machine_insights
+
+def calculate_failure_probability(readings):
+    return analytics.calculate_failure_probability(readings)
+
+def calculate_historical_failure_factor(machine_id: str):
+    return analytics.calculate_historical_failure_factor(machine_id)
+
+def calculate_log_risk_score(logs):
+    return analytics.calculate_log_risk_score(logs)
+
+def get_all_equipment_metadata():
+    return database.get_all_equipment_metadata()
+
+def get_all_pending_tasks():
+    return database.get_all_pending_tasks()
+
+def get_asset_priority_profile(machine_id: str):
+    return database.get_asset_priority_profile(machine_id)
+
+def get_available_technicians():
+    return database.get_available_technicians()
+
+def get_available_tools(machine_id: str):
+    return database.get_available_tools(machine_id)
+
+def get_equipment_metadata(machine_id: str):
+    return database.get_equipment_metadata(machine_id)
+
+def get_inventory_spares(machine_id: str):
+    return database.get_inventory_spares(machine_id)
+
+def get_machine_health_summary(machine_id: str):
+    return database.get_machine_health_summary(machine_id)
+
+def get_machine_textual_history(machine_id: str):
+    return database.get_machine_textual_history(machine_id)
+
+def get_production_windows(machine_id: str):
+    return database.get_production_windows(machine_id)
+
+def get_safety_risk_profile(machine_id: str):
+    return database.get_safety_risk_profile(machine_id)
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -82,6 +108,7 @@ def _severity_component(machine_id: str, insights: Dict[str, Any]) -> Dict[str, 
     threat_confidence = float(insights["threatDetection"]["confidence"])
     rul_hours = float(insights["wearModel"]["rulHours"])
     alert_count = len(health["alerts"])
+    critical_alert_count = sum(1 for a in health["alerts"] if str(a.get("severity", "")).lower() == "critical")
     
     # 3. Failure Mode Analysis (Past incidents)
     historical_factor = calculate_historical_failure_factor(machine_id)
@@ -104,6 +131,7 @@ def _severity_component(machine_id: str, insights: Dict[str, Any]) -> Dict[str, 
         "threatConfidence": threat_confidence,
         "rulHours": rul_hours,
         "alertCount": alert_count,
+        "criticalAlertCount": critical_alert_count,
         "historicalFactor": historical_factor,
         "mtbfRatio": round(mtbf_ratio, 2)
     }
@@ -271,7 +299,7 @@ def _compose_reason(machine_name: str, criticality: Dict[str, Any], severity: Di
 def _virtual_task(machine_id: str, machine_name: str, insights: Dict[str, Any], priority_score: float, priority_band: str, action: str, reason: str, breakdown: Dict[str, Any], resource: Dict[str, Any], opportunity: Dict[str, Any], telemetry: Dict[str, Any]) -> Dict[str, Any]:
     due_date = opportunity["windowStart"] or datetime.now().isoformat()
     title_prefix = {
-        "critical": "Urgent Intervention",
+        "critical": "Urgent Diagnostic",
         "high": "Priority Maintenance",
         "medium": "Planned Inspection",
         "low": "Routine Check",
@@ -334,9 +362,16 @@ def generate_prioritized_schedule(limit: int = 12) -> List[Dict[str, Any]]:
         
         priority_score = _clamp(priority_score, 1, 100)
         
-        # Absolute Overrides for Safety
+        # Absolute Overrides for Safety & Critical Conditions
+        has_critical_condition = (
+            severity.get("telemetryProbability", 0) >= 80 or 
+            severity.get("criticalAlertCount", 0) > 0 or 
+            severity.get("threatConfidence", 0) >= 85
+        )
         if safety["safetyOverride"] >= 35 or safety["complianceBoost"] >= 25:
             priority_score = max(priority_score, 95)
+        elif has_critical_condition:
+            priority_score = max(priority_score, 85)
             
         priority_band = _priority_band(priority_score)
         action = _recommended_action(priority_score, resource, safety)

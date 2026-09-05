@@ -4,7 +4,7 @@ import sys
 from unittest.mock import MagicMock, patch
 
 # Add src to python path
-sys.path.append(os.path.join(os.path.dirname(__file__), '../'))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 
 from src.agent.maintenance_agent import MaintenanceAgent
 from src.data import database

@@ -1,5 +1,5 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, Suspense } from 'react';
 import Link from 'next/link';
 import { CloudOff, Filter, Search, Download, Loader2 } from 'lucide-react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
@@ -15,7 +15,7 @@ const MOCK_LOGS = Array.from({ length: 15 }).map((_, i) => ({
   severity: i % 4 === 0 || i % 5 === 0 ? 'ERROR' : 'INFO'
 }));
 
-export default function CloudConnectLogsPage() {
+function CloudConnectLogsPageContent() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -194,5 +194,19 @@ export default function CloudConnectLogsPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function CloudConnectLogsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex h-[50vh] w-full items-center justify-center">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-[var(--color-primary)] border-t-transparent" />
+        </div>
+      }
+    >
+      <CloudConnectLogsPageContent />
+    </Suspense>
   );
 }

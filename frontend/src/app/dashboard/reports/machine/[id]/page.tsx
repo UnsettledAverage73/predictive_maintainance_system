@@ -22,7 +22,7 @@ const TelemetryChart = dynamic(() => import('@/components/charts/TelemetryChart'
 interface ParameterView {
   id: number | string;
   displayName: string;
-  parameterKey?: string;
+  parameterKey: string;
   parameter_key?: string;
   unit?: string;
   lastValue?: number | string;
@@ -52,7 +52,7 @@ export default function MachineReportPage({ params }: { params: Promise<{ id: st
     const fetchData = async () => {
       try {
         const [equipment, telemetryData, historyData, paramData, insightData] = await Promise.all([
-          api.getEquipment().then(list => list.find((m: Machine) => m.id === idStr)).catch(() => null),
+          api.getEquipment().then((list: Machine[]) => list.find((m: Machine) => m.id === idStr)).catch(() => null),
           api.getMachineTelemetry(idStr, 1440).catch(() => []),
           api.getMachineHistory(idStr).catch(() => []),
           api.getMachineParameters(idStr).catch(() => []),
@@ -60,20 +60,30 @@ export default function MachineReportPage({ params }: { params: Promise<{ id: st
         ]);
         
         if (equipment) setMachine(equipment);
-        setParameters(paramData || []);
+        setParameters((paramData || []).map((p: any) => ({
+          ...p,
+          parameterKey: p.parameterKey || p.parameter_key || p.name || String(p.id)
+        })));
         setTelemetry(telemetryData || []);
         setInsights(insightData);
-        setLogs((Array.isArray(historyData) ? historyData : []).map((l) => ({
+        setLogs((Array.isArray(historyData) ? historyData : []).map((l: any) => ({
           id: l.id.toString(),
+          machine_id: l.equipment_id,
+          machine_name: equipment?.name || idStr,
+          task_name: l.action_taken,
+          task_type: 'routine' as const,
+          status: "completed" as const,
+          priority: "medium" as const,
+          due_date: l.timestamp,
+          assigned_to: l.operator_name,
+          aiReason: "Manual maintenance log entry.",
+          notes: l.parts_replaced !== "None" ? `Replaced: ${l.parts_replaced}` : "General service.",
+          created_at: l.timestamp,
           machineId: l.equipment_id,
           machineName: equipment?.name || idStr,
           title: l.action_taken,
-          status: "completed",
-          priority: "medium",
           dueDate: l.timestamp,
           assignedTo: l.operator_name,
-          aiReason: "Manual maintenance log entry.",
-          description: l.parts_replaced !== "None" ? `Replaced: ${l.parts_replaced}` : "General service.",
           createdAt: l.timestamp
         })));
         setIsLoading(false);

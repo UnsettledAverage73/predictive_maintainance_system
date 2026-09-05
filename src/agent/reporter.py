@@ -2,10 +2,11 @@ import sqlite3
 import json
 from datetime import datetime, timedelta
 from src.agent.maintenance_agent import MaintenanceAgent
+from src.data.database import DB_PATH
 
 class SovereignReporter:
-    def __init__(self, db_path="data/factory_ops.db"):
-        self.db_path = db_path
+    def __init__(self, db_path=None):
+        self.db_path = db_path or DB_PATH
         self.agent = MaintenanceAgent("data/sample_maintenance_data.json")
 
     def generate_daily_brief(self):

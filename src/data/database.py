@@ -2,6 +2,11 @@ import sqlite3
 from datetime import datetime, timedelta
 import os
 
+try:
+    import rust_engine
+except ImportError:
+    rust_engine = None
+
 DB_PATH = "data/factory_ops.db"
 TEXTUAL_DATA_PATH = "data/sample_maintenance_data.json"
 
@@ -117,15 +122,17 @@ def init_db():
         )
     ''')
 
-    try:
-        cursor.execute("ALTER TABLE equipment ADD COLUMN machine_class TEXT")
-    except sqlite3.OperationalError: pass
-    try:
-        cursor.execute("ALTER TABLE equipment ADD COLUMN is_bottleneck BOOLEAN DEFAULT 0")
-    except sqlite3.OperationalError: pass
-    try:
-        cursor.execute("ALTER TABLE equipment ADD COLUMN quality_impact_score REAL DEFAULT 0.0")
-    except sqlite3.OperationalError: pass
+    for alter_stmt in (
+        "ALTER TABLE equipment ADD COLUMN machine_class TEXT",
+        "ALTER TABLE equipment ADD COLUMN is_bottleneck BOOLEAN DEFAULT 0",
+        "ALTER TABLE equipment ADD COLUMN quality_impact_score REAL DEFAULT 0.0",
+        "ALTER TABLE equipment ADD COLUMN mac_address TEXT",
+        "ALTER TABLE equipment ADD COLUMN sensor_kind TEXT",
+    ):
+        try:
+            cursor.execute(alter_stmt)
+        except sqlite3.OperationalError:
+            pass
 
     # 5. Maintenance Schedule: Task management
     cursor.execute('''
@@ -174,6 +181,8 @@ def init_db():
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS machine_financials (
             machine_id TEXT PRIMARY KEY,
+            standard_labor_rate REAL DEFAULT 500.0,
+            num_laborers INTEGER DEFAULT 2,
             planned_labor_cost_inr REAL NOT NULL,
             emergency_labor_multiplier REAL DEFAULT 3.0,
             downtime_cost_per_hour_inr REAL NOT NULL,
@@ -183,6 +192,14 @@ def init_db():
             FOREIGN KEY(machine_id) REFERENCES equipment(id)
         )
     ''')
+
+    # Add columns if they don't exist (Migration)
+    try:
+        cursor.execute("ALTER TABLE machine_financials ADD COLUMN standard_labor_rate REAL DEFAULT 500.0")
+    except sqlite3.OperationalError: pass
+    try:
+        cursor.execute("ALTER TABLE machine_financials ADD COLUMN num_laborers INTEGER DEFAULT 2")
+    except sqlite3.OperationalError: pass
 
     # 9. Spare Parts Catalog: Planned vs emergency cost baselines
     cursor.execute('''
@@ -474,10 +491,6 @@ def get_registered_manuals(machine_id=None):
     conn.close()
     return [dict(row) for row in rows]
 
-from datetime import datetime, timedelta
-
-# ... existing imports ...
-
 def seed_initial_data():
     """Populates the database with initial machines and parameters if empty."""
     conn = sqlite3.connect(DB_PATH)
@@ -536,11 +549,12 @@ def seed_insight_data():
     cursor.execute("SELECT id, name FROM equipment")
     machines = cursor.fetchall()
 
+    # Format: (planned_labor_total, emergency_mult, downtime_cost, markup, std_rate, num_labor)
     financial_defaults = {
-        "CNC001": (18000, 3.4, 95000, 1.35),
-        "CONV01": (12000, 3.1, 65000, 1.25),
-        "HYD005": (15000, 3.3, 85000, 1.30),
-        "EXT002": (11000, 3.0, 60000, 1.25),
+        "CNC001": (18000, 3.4, 95000, 1.35, 500, 2),
+        "CONV01": (12000, 3.1, 65000, 1.25, 400, 2),
+        "HYD005": (15000, 3.3, 85000, 1.30, 600, 3),
+        "EXT002": (11000, 3.0, 60000, 1.25, 450, 2),
     }
 
     part_defaults = {
@@ -598,14 +612,14 @@ def seed_insight_data():
     }
 
     for machine_id, machine_name in machines:
-        planned_labor, emergency_mult, downtime_cost, markup = financial_defaults.get(
-            machine_id, (10000, 3.0, 50000, 1.25)
+        planned_labor, emergency_mult, downtime_cost, markup, std_rate, num_lab = financial_defaults.get(
+            machine_id, (10000, 3.0, 50000, 1.25, 500, 2)
         )
         cursor.execute("""
             INSERT OR IGNORE INTO machine_financials
-            (machine_id, planned_labor_cost_inr, emergency_labor_multiplier, downtime_cost_per_hour_inr, default_parts_markup_multiplier, currency)
-            VALUES (?, ?, ?, ?, ?, 'INR')
-        """, (machine_id, planned_labor, emergency_mult, downtime_cost, markup))
+            (machine_id, planned_labor_cost_inr, emergency_labor_multiplier, downtime_cost_per_hour_inr, default_parts_markup_multiplier, currency, standard_labor_rate, num_laborers)
+            VALUES (?, ?, ?, ?, ?, 'INR', ?, ?)
+        """, (machine_id, planned_labor, emergency_mult, downtime_cost, markup, std_rate, num_lab))
 
         cursor.execute("SELECT COUNT(*) FROM spare_parts_catalog WHERE machine_id = ?", (machine_id,))
         if cursor.fetchone()[0] == 0:
@@ -768,7 +782,7 @@ def seed_priority_scheduling_data():
     conn.commit()
     conn.close()
 
-def add_equipment(eq_id, name, line, protocol, agent_id=None, machine_class='Generic Industrial', is_bottleneck=0, quality_impact_score=0.0):
+def add_equipment(eq_id, name, line, protocol, agent_id=None, machine_class='Generic Industrial', is_bottleneck=0, quality_impact_score=0.0, mac_address=None, sensor_kind=None):
     """
     Onboards a new physical asset into the Sovereign Matrix.
     """
@@ -776,8 +790,8 @@ def add_equipment(eq_id, name, line, protocol, agent_id=None, machine_class='Gen
     cursor = conn.cursor()
     try:
         cursor.execute("""
-            INSERT OR REPLACE INTO equipment (id, name, production_line, protocol, agent_id, last_maintenance_date, next_scheduled_date, mtbf, machine_class, is_bottleneck, quality_impact_score)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO equipment (id, name, production_line, protocol, agent_id, last_maintenance_date, next_scheduled_date, mtbf, machine_class, is_bottleneck, quality_impact_score, mac_address, sensor_kind)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             eq_id, name, line, protocol, 
             agent_id or f"agt-{eq_id}", 
@@ -786,7 +800,9 @@ def add_equipment(eq_id, name, line, protocol, agent_id=None, machine_class='Gen
             5000,
             machine_class,
             is_bottleneck,
-            quality_impact_score
+            quality_impact_score,
+            mac_address,
+            sensor_kind
         ))
         conn.commit()
         return True
@@ -1062,17 +1078,17 @@ def seed_common_parameters(machine_id):
                       category='common', normal_min=n_min, normal_max=n_max, 
                       warning_threshold=w_th, critical_threshold=c_th, direction=direction)
 
-def log_telemetry_point(machine_id, key, value, string_value=None):
+def log_telemetry_point(machine_id, key, value, string_value=None, timestamp=None):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
         "INSERT INTO telemetry_readings (machine_id, parameter_key, value, string_value, timestamp) VALUES (?, ?, ?, ?, ?)",
-        (machine_id, key, value, string_value, datetime.now().isoformat())
+        (machine_id, key, value, string_value, timestamp or datetime.now().isoformat())
     )
     conn.commit()
     conn.close()
 
-def log_sensor_reading(eq_id, temp, vib):
+def log_sensor_reading(eq_id, temp, vib, timestamp=None):
     """
     Logs raw telemetry data and performs sub-millisecond Edge analysis via Rust.
     """
@@ -1097,7 +1113,7 @@ def log_sensor_reading(eq_id, temp, vib):
 
     cursor.execute(
         "INSERT INTO sensor_readings (equipment_id, timestamp, temperature, vibration) VALUES (?, ?, ?, ?)",
-        (eq_id, datetime.now().isoformat(), temp, vib)
+        (eq_id, timestamp or datetime.now().isoformat(), temp, vib)
     )
     conn.commit()
     conn.close()

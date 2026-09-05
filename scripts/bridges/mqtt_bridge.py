@@ -67,10 +67,18 @@ def on_message(client, userdata, msg):
     except json.JSONDecodeError:
         pass
 
-client = mqtt.Client()
-client.on_connect = on_connect
-client.on_message = on_message
+def start_consumer():
+    try:
+        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    except AttributeError:
+        client = mqtt.Client()
+    client.on_connect = on_connect
+    client.on_message = on_message
 
-client.connect(BROKER, PORT, 60)
-client.loop_forever()
+    print(f"Connecting to MQTT Broker {BROKER}:{PORT}...")
+    client.connect(BROKER, PORT, 60)
+    client.loop_forever()
+
+if __name__ == "__main__":
+    start_consumer()
 

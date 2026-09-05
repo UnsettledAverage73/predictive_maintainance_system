@@ -170,21 +170,17 @@ async def run_ingestor():
     print(f"--- [SOVEREIGN] IoT Ingestor Online ---")
     print(f"Monitoring: {IPC_FILE} | Channel: {REDIS_CHANNEL} | Commands: {COMMAND_FILE}")
     
-    last_processed_ts = 0
+    last_processed_ts: Dict[str, float] = {}
 
     try:
         while True:
             # --- PHASE 1: COMMAND LISTENING (ACTUATION) ---
-            # Check if the AI has issued a mitigation command
+            # Check if the AI has issued a mitigation command (simulator will process and clear)
             if os.path.exists(COMMAND_FILE):
                 try:
                     with open(COMMAND_FILE, "r") as f:
                         cmd = json.load(f)
-                    print(f"\n[!!!] MITIGATION COMMAND RECEIVED: {cmd['action']} for {cmd['equipment_id']} [!!!]")
-                    
-                    # In this simulation, we delete the file to 'execute' the command
-                    os.remove(COMMAND_FILE) 
-                    print(f"✅ Command Dispatched to Hardware Layer.")
+                    print(f"\n[!!!] MITIGATION COMMAND DISPATCHED: {cmd.get('action')} for {cmd.get('equipment_id')} [!!!]")
                 except (json.JSONDecodeError, IOError):
                     pass
 
@@ -205,11 +201,13 @@ async def run_ingestor():
                 readings.sort(key=lambda x: x.get('timestamp', 0))
 
                 for payload in readings:
+                    eq_id = payload.get("equipment_id")
+                    if not eq_id:
+                        continue
                     ts = payload.get("timestamp", 0)
-                    if ts <= last_processed_ts:
+                    if ts <= last_processed_ts.get(eq_id, 0):
                         continue
 
-                    eq_id = payload.get("equipment_id")
                     temp = payload.get("temperature", 0)
                     vib = payload.get("vibration", 0)
 
@@ -283,7 +281,7 @@ async def run_ingestor():
                             # Log heartbeat without calling AI
                             pass 
 
-                    last_processed_ts = ts
+                    last_processed_ts[eq_id] = ts
 
             except (json.JSONDecodeError, IOError):
                 pass

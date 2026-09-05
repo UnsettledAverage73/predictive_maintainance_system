@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { Suspense, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { MachineCard } from "@/components/machines/MachineCard";
 import { MachineCardSkeleton } from "@/components/machines/MachineCardSkeleton";
 import { Machine } from "@/types";
@@ -12,7 +12,7 @@ import Link from "next/link";
 type StatusFilter = "all" | Machine["status"];
 type ProtocolFilter = "all" | Machine["protocol"];
 
-export default function MachinesPage() {
+function MachinesPageContent() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -170,5 +170,19 @@ export default function MachinesPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function MachinesPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex h-[50vh] w-full items-center justify-center">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-[var(--color-primary)] border-t-transparent" />
+        </div>
+      }
+    >
+      <MachinesPageContent />
+    </Suspense>
   );
 }

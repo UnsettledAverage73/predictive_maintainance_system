@@ -11,12 +11,34 @@ const getBrowserBackendOrigin = () => {
 const EXTERNAL_API_BASE_URL = normalizeBaseUrl(process.env.NEXT_PUBLIC_API_URL);
 const API_BASE_URL = EXTERNAL_API_BASE_URL || "";
 
+const getBrowserApiOrigin = () => {
+  if (typeof window === "undefined") {
+    return "http://127.0.0.1:8000";
+  }
+
+  return `http://${window.location.hostname}:8000`;
+};
+
 export function buildApiUrl(endpoint: string) {
-  return API_BASE_URL ? `${API_BASE_URL}${endpoint}` : endpoint;
+  if (typeof window !== "undefined") {
+    // If EXTERNAL_API_BASE_URL is not set or contains the stale IP, use browser origin at port 8000
+    if (!API_BASE_URL || API_BASE_URL.includes("192.168.182.181")) {
+      return `http://${window.location.hostname}:8000${endpoint}`;
+    }
+  }
+
+  if (API_BASE_URL && !API_BASE_URL.includes("192.168.182.181")) {
+    return `${API_BASE_URL}${endpoint}`;
+  }
+
+  return `${getBrowserApiOrigin()}${endpoint}`;
 }
 
 export function buildWebSocketUrl(path: string) {
-  const backendOrigin = EXTERNAL_API_BASE_URL || getBrowserBackendOrigin();
+  let backendOrigin = EXTERNAL_API_BASE_URL || getBrowserBackendOrigin();
+  if (backendOrigin.includes("192.168.182.181")) {
+    backendOrigin = getBrowserBackendOrigin();
+  }
   const wsUrl = new URL(backendOrigin);
   wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
   wsUrl.pathname = path;
@@ -38,8 +60,27 @@ export async function fetchApi(endpoint: string, options?: RequestInit) {
       },
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Network request failed";
-    throw new Error(`Unable to reach backend at ${API_BASE_URL || "same-origin /api proxy"}: ${message}`);
+    // Self-healing fallback: if the primary URL fails, attempt direct host:8000 or same-origin
+    try {
+      const fallbackUrl = typeof window !== "undefined"
+        ? `http://${window.location.hostname}:8000${endpoint}`
+        : `http://127.0.0.1:8000${endpoint}`;
+
+      if (fallbackUrl !== url) {
+        response = await fetch(fallbackUrl, {
+          ...options,
+          headers: {
+            "Content-Type": "application/json",
+            ...options?.headers,
+          },
+        });
+      } else {
+        throw error;
+      }
+    } catch {
+      const message = error instanceof Error ? error.message : "Network request failed";
+      throw new Error(`Unable to reach backend at ${url}: ${message}`);
+    }
   }
 
   if (!response.ok) {
@@ -62,6 +103,16 @@ export const api = {
   testConnection: (payload: any) => fetchApi("/api/test-connection", { method: "POST", body: JSON.stringify(payload) }),
   getFactoryStats: () => fetchApi("/api/factory/stats"),
   getFactoryUsage: () => fetchApi("/api/factory/usage"),
+  getNetworkEndpoint: () => fetchApi("/api/network/endpoint"),
+  detectDevices: () => fetchApi("/api/iot/detect-devices"),
+  getConnectedSensors: (minutes: number = 5) => fetchApi(`/api/iot/connected-sensors?minutes=${minutes}`),
+  pairEsp32: (equipmentId: string, macAddress: string, sensorKind?: string) => fetchApi(`/api/equipment/${equipmentId}/pair-esp32`, {
+    method: "POST",
+    body: JSON.stringify({
+      mac_address: macAddress,
+      ...(sensorKind ? { sensor_kind: sensorKind } : {}),
+    }),
+  }),
   getMachineTelemetry: (id: string, minutes: number = 60) => fetchApi(`/api/telemetry/${id}?minutes=${minutes}`),
   getMachineHistory: (id: string) => fetchApi(`/api/history/${id}`),
   getMachineInsights: (id: string) => fetchApi(`/api/machines/${id}/insights`),

@@ -3,7 +3,7 @@ services:
   - type: web
     name: predictive-maint-backend
     env: docker
-    plan: free
+    plan: starter
     region: oregon
     envVars:
       - key: GROQ_API_KEY
@@ -34,4 +34,4 @@ services:
         fromService:
           type: web
           name: predictive-maint-backend
-          property: host
+          property: url

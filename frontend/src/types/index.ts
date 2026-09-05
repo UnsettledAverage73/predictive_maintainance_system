@@ -92,7 +92,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   timestamp: string;
-  agentType?: 'Machine Agent' | 'Orchestrator';
+  agentType?: 'Machine Agent' | 'Orchestrator' | 'Orchestrator Core' | 'System';
 }
 
 export interface MachineCostAnalysis {
